@@ -146,10 +146,9 @@ def sliding_window(data,
                        template])
 
         all_betas[:, idx] = np.linalg.inv(X.T @ X) @ X.T @ y
-        try:
-            yhat = all_betas[0, idx] + all_betas[1, idx] * template
-        except:
-            breakpoint()
+
+        yhat = all_betas[0, idx] + all_betas[1, idx] * template
+
         # Pearson correlate every fit biexpotential curve to the
         # data at every window. Assign the outputs to the chunks idx.
         all_corr[idx] = vectorised_pearsons(y, yhat)
