@@ -95,16 +95,18 @@ def load_file_with_neo(full_filepath, file_ext):
         block_neo_file: block from the neo file
     """
     try:
-        if file_ext.upper() == ".WCP":
-            reader = neo.WinWcpIO(full_filepath)
-        elif file_ext.upper() == ".ABF":
+        if file_ext.upper() == ".ABF":
             reader = neo.AxonIO(full_filepath)
+        elif file_ext.upper() in [".AXGX", ".AXGD"]:
+            reader = neo.AxographIO(full_filepath)
+        elif file_ext.upper() == ".WCP":
+            reader = neo.WinWcpIO(full_filepath)
         elif file_ext.upper() == ".EDR":
             reader = neo.WinEdrIO(full_filepath)
         else:
             utils.show_messagebox("Cannot Determine filetype",
                                   "Cannot determine filetype. Currently supported filetyes\n"
-                                  "are .abf and .wcp")
+                                  "are .abf, .axgx, .wcp, .'edr")
             return None, None, None
     except:
         utils.show_messagebox("Neo Load Error", "Could not load file. Check that the\n"
@@ -177,12 +179,13 @@ def get_channel_type(channel):
     channel_type = channel[0].strip()
     channel_units = channel[4].strip()
 
-    if "Vm" in channel_type or channel_units in ["mV", "V"]:
+    if channel_type in ["Vm", "Voltage"] or channel_units in ["mV", "V"]:
         channel_type = "Vm"
-    elif "Im" in channel_type or channel_units in ["pA", "nA"]:
+    elif channel_type in ["Im", "Current"] or channel_units in ["pA", "nA"]:
         channel_type = "Im"
     else:
-        utils.show_messagebox("Type Error", "Cannot determine recording type. Please contact Easy Electrophysiology")
+        utils.show_messagebox("Type Error",
+                              "Cannot determine recording type. Please contact Easy Electrophysiology")
         return None, None
     return channel_type, channel_units
 
@@ -265,6 +268,11 @@ class ImportData:
         """
         if self.vm_units == "V":
             self.vm_array *= 1000
+            self.vm_units = "mV"
+
+        if self.im_units == "A":
+            self.im_array *= 1000000000000
+            self.im_units = "pA"
 
         if self.im_units == "nA":
             self.im_array *= 1000
@@ -274,6 +282,7 @@ class ImportData:
             self.t_start /= 1000
             self.t_stop /= 1000
             self.time_array /= 1000
+            self.time_units = "s"
 
         if self.t_start != 0:
             self.time_offset = np.array(self.t_start)
