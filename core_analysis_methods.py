@@ -696,8 +696,9 @@ def detrend_data(x,
     poly_order: order of polynomial to detrend (1-20 for Detrend data manipulation)
     """
     fit = fit_polynomial(x, y, poly_order)
-    y_mean = np.mean(y)
-    detrended_y = y - fit + y_mean
+    y_mean = np.mean(y) if y.ndim <= 1 else np.mean(y, axis=1)
+    y_mean = np.atleast_2d(y_mean)
+    detrended_y = y - fit + y_mean.T
     return detrended_y, fit
 
 
@@ -830,6 +831,10 @@ def set_data_params(data_object):
     data_object.norm_third_deriv_vm.setflags(write=False)
     data_object.norm_second_deriv_vm.setflags(write=False)
 
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Utils
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 def calc_fs(time_):
     num_samples = len(time_)
     time_period = np.max(time_) - np.min(time_)
@@ -856,3 +861,37 @@ def generate_time_array(start, stop, num_samples, known_ts, start_stop_time_in_m
         time_array *= 1000
 
     return time_array
+
+def sort_dict_based_on_keys(dict_to_sort):
+    """
+    Sort a dict by the key, assuming the key is a str time
+    at which a spike / event occured
+    """
+    sorted_dict = dict(sorted(dict_to_sort.items(), key=lambda item: float(item[0])))
+    return sorted_dict
+
+def get_conversion_to_pa_table():
+    """
+    Reference table for converting units to pA on file load (see importdata.py)
+    """
+    conversion_to_pa_table = {
+        "fA": 1e-3,
+        "nA": 1e3,
+        "uA": 1e6,
+        "mA": 1e9,
+        "A": 1e12,
+    }
+    return conversion_to_pa_table
+
+def get_conversion_to_mv_table():
+    """
+    Reference table for converting units to mV on file load (see importdata.py)
+    """
+    conversion_to_mv_table = {
+        "pV": 1e-9,
+        "nV": 1e-6,
+        "uV": 1e-3,
+        "V": 1e3,
+    }
+    return conversion_to_mv_table
+

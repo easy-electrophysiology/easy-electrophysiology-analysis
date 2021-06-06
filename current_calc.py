@@ -416,7 +416,9 @@ def get_first_spike_latency(spike_info,
     fs_latency = utils.np_empty_nan(len(spike_info))
     for rec_idx, rec_spikes in enumerate(spike_info):
         if rec_spikes:
-            first_spike_time = sorted(rec_spikes.keys())[0]
+            sorted_rec_spikes = core_analysis_methods.sort_dict_based_on_keys(rec_spikes)
+            first_spike_time = list(sorted_rec_spikes.keys())[0]
+
             fs_latency[rec_idx] = float(first_spike_time) - im_injection_start - min_max_time[rec_idx][0]
         elif rec_spikes == 0:
             fs_latency[rec_idx] = 0
@@ -443,7 +445,8 @@ def calculate_isi_measures(spike_info,
             analysed_data[rec_idx] = 0
 
         elif len(rec_spikes) > 1:
-            spike_times = np.array(sorted(rec_spikes.keys())).astype(float)
+            sorted_rec_spikes = core_analysis_methods.sort_dict_based_on_keys(rec_spikes)
+            spike_times = np.array(list(sorted_rec_spikes.keys())).astype(float)
 
             if analysis_type == "mean_isi_ms":
                 analysed_data[rec_idx] = np.mean(np.diff(spike_times))
@@ -541,37 +544,47 @@ def calculate_input_resistance(im_in_pa,
     """
     Calculate the input resistance as an OLS linear fit to delta-I, delta-V values.
 
+    If only 1 pair of Im, Vm is input, calculate Ri by R = V / I
+
     INPUTS:
         im_in_pa: rec x 1 pandas series of current steps in pA
         vm_im_pA: rec x 1 pandas series of the change in voltage from baseline
+
     """
     im_in_pa = utils.convert_pd_to_np(im_in_pa)
     vm_in_mv = utils.convert_pd_to_np(vm_in_mv)
-    im_in_pa = np.atleast_1d(im_in_pa)
 
     im_in_na = im_in_pa / 1000
-    X = np.vstack([im_in_na,
-                   np.ones(len(im_in_na))]).T
-    y = vm_in_mv
 
-    I = np.linalg.inv
-    slope, intercept = I(X.T @ X) @ X.T @ y
+    if im_in_na.size == 1:
+        input_resistance = vm_in_mv / im_in_na
+        intercept = None
+        
+    else:
+        im_in_na = np.atleast_1d(im_in_na)
 
-    return slope, intercept
+        X = np.vstack([im_in_na,
+                       np.ones(len(im_in_na))]).T
+        y = vm_in_mv
 
-def calculate_sag_ratio(steady_state,
-                        peak):
+        I = np.linalg.inv
+        input_resistance, intercept = I(X.T @ X) @ X.T @ y
+
+    return input_resistance, intercept
+
+def calculate_sag_ratio(sag_hump,
+                        peak_deflections):
     """
-    Calculate the sag / hump ratio as the ratio of the sag / hump (i.e. min or max value over the period)
-    over the steady state (.e.g the steady state Vm deflection after current injection)
+    Calculate the sag / hump ratio the sag / peak deflection. This is equivilent to the
+    % of the total voltage deflection that is accounted for by the sag/hump.
 
     INPUT:
-        steady_state: rec x t array  of steady state Vm values
-        peak: rec x 1 array of peak (i.e. sag (min) or hump (max) values
+        sag_hump: sag (or hump) rec x 1 of sag (peak - steady state) values
+        peak_deflection: rec x 1 array of peak - baseline values
 
     OUTPUT: rec x 1 array of sag ratios
     """
-    sag_ratio = peak / steady_state
+    sag_ratio = (sag_hump / peak_deflections)
     return sag_ratio
 
 def calculate_baseline_minus_inj(data,
@@ -612,14 +625,15 @@ def calculate_baseline_minus_inj(data,
     counted_recs = utils.np_empty_nan(num_recs)
     avg_over_period = utils.np_empty_nan(num_recs)
     baselines = utils.np_empty_nan(num_recs)
+    steady_states = utils.np_empty_nan(num_recs)
 
     for rec in range(rec_from, upper_inclusive_rec_bound):
         baselines[rec] = np.mean(data[rec][bounds_sample[0]:bounds_sample[1]])
-        injection = np.mean(data[rec][bounds_sample[2]:bounds_sample[3]])
-        avg_over_period[rec] = injection - baselines[rec]
+        steady_states[rec] = np.mean(data[rec][bounds_sample[2]:bounds_sample[3]])
+        avg_over_period[rec] = steady_states[rec] - baselines[rec]
         counted_recs[rec] = rec + 1
 
-    return counted_recs, avg_over_period, baselines
+    return counted_recs, avg_over_period, baselines, steady_states
 
 def find_negative_peak(vm,
                        time_array,
@@ -629,18 +643,24 @@ def find_negative_peak(vm,
                        rec_from,
                        rec_to,
                        avg_over_vm,
-                       baseline,
+                       vm_baselines,
+                       vm_steady_state,
                        peak_direction):
     """
-    Find the minimum, maximum or min/max in same direction as Im injection for a bounded Im period
+    Find the minimum, maximum or min/max in same direction as Im injection for a bounded Im period. Used for Sag / Hump Analysis
 
     INPUTS: start_time, stop_time - time in s of the period to mind the min/max within
             avg_over_vm - a rec x 1 array of the the average change in Vm used for following Im injection (Im not used in case of 1-channel data)
-            baseline - rec x 1 array of baseline Vm (as calculated by the 'baseline' regions during input resistance analysis)
+            vm_steady_state - rec x 1 array of vm_steady_state Vm (as calculated by the 'vm_steady_state' regions during input resistance analysis)
             peak_direction - user specified direction of peak to find, either "follow_im", "min" or "max". If "follow_im", min will be
                              used if Im injection was negative and max will be used if positive
 
     see calculate_baseline_minus_inj() and calculate_rheobase() for other inputs.
+
+    OUTPUTS:
+        peaks - dict of length num_recs with peak information used for plotting
+        sag_hump - the sag (or hump) (rec x 1 vector) for sag as defined peak - vm_steady_state
+        peak_deflection: rec x 1 vector of peak deflection as calculated peak - vm_baseline
 
     TODO: too many arguments, clean up.
     """
@@ -650,7 +670,8 @@ def find_negative_peak(vm,
     stop_sample = convert_time_to_samples(stop_time, "stop", time_array, min_max_time, rec_from, add_offset_back=True)
 
     peaks = [{} for rec in range(0, len(vm))]
-    norm_peaks_vm_vector = utils.np_empty_nan((len(vm)))
+    sag_humps = utils.np_empty_nan((len(vm)))
+    peak_deflections = utils.np_empty_nan((len(vm)))
     for rec in range(rec_from, upper_inclusive_rec_bound):
 
         if peak_direction == "follow_im":
@@ -668,11 +689,12 @@ def find_negative_peak(vm,
         peak_idx = start_sample + peak_idx
         peak_time = time_array[rec][peak_idx]
         peak_vm = vm[rec][peak_idx]
-        norm_peak_vm = peak_vm - baseline[rec]
-        peaks[rec][str(peak_time)] = [peak_vm, peak_idx, norm_peak_vm]
-        norm_peaks_vm_vector[rec] = norm_peak_vm
+        sag_hump_vm = peak_vm - vm_steady_state[rec]
+        peaks[rec][str(peak_time)] = [peak_vm, peak_idx, sag_hump_vm]
+        sag_humps[rec] = sag_hump_vm
+        peak_deflections[rec] = peak_vm - vm_baselines[rec]
 
-    return peaks, norm_peaks_vm_vector
+    return peaks, sag_humps, peak_deflections
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Spike Kinetic Methods
@@ -771,6 +793,8 @@ def analyse_spike_kinetics(cfgs,
                                                              fahp_idx,
                                                              thr_vm,
                                                              cfgs)
+    if len(peak_to_end_vm) < 3:
+        return "minimum_peak_to_decay_size_error"
 
     rise_min_time, rise_min_vm, rise_max_time, rise_max_vm, rise_time = core_analysis_methods.calc_rising_slope_time(thr_to_peak_vm,
                                                                                                                      thr_to_peak_time,
@@ -784,6 +808,7 @@ def analyse_spike_kinetics(cfgs,
                                                                                                                            peak_vm, min_bound,
                                                                                                                            cfgs.skinetics["decay_cutoff_low"], cfgs.skinetics["decay_cutoff_high"],
                                                                                                                            cfgs.skinetics["interp_200khz"])
+
     half_amp = thr_vm + (amplitude / 2)
     rise_mid_time, rise_mid_vm, decay_mid_time, decay_mid_vm, fwhm = core_analysis_methods.calculate_fwhm(thr_to_peak_time,
                                                                                                           thr_to_peak_vm,

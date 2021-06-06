@@ -146,10 +146,8 @@ def sliding_window(data,
                        template])
 
         all_betas[:, idx] = np.linalg.inv(X.T @ X) @ X.T @ y
-        try:
-            yhat = all_betas[0, idx] + all_betas[1, idx] * template
-        except:
-            breakpoint()
+        yhat = all_betas[0, idx] + all_betas[1, idx] * template
+
         # Pearson correlate every fit biexpotential curve to the
         # data at every window. Assign the outputs to the chunks idx.
         all_corr[idx] = vectorised_pearsons(y, yhat)
@@ -300,7 +298,7 @@ def find_event_peak_after_smoothing(time_array,
     # We want to index around the peak in terms of the smoothed event only. The we want to convert this back to full data indicies.
     # But also need to make sure the start index is never less than zero or more than the length of the event.
     ev_peak_idx = peak_idx - start_idx
-    smooth_search_period = samples_to_smooth * 3  # TOOD: constant dervied from testing
+    smooth_search_period = samples_to_smooth * consts("event_peak_smoothing")
 
     peak_search_region_start = ev_peak_idx - smooth_search_period
     peak_search_region_start = is_at_least_zero(peak_search_region_start)
@@ -335,8 +333,8 @@ def calculate_event_baseline(time_array,
     """
     Find the baseline of an event from the peak autoamtically ("per_event" in configs).
 
-    First determine the region to search for the baseline. This is taken as half the search window, which seems to
-    work well.
+    First determine the region to search for the baseline. This is taken as half the search window, which
+    works well when tested across events with many different types of kinetics.
 
     Within this region, draw a straight line from each sample to the peak. Of these lines, take the steepest (i.e. closest to the
     peak) but within the top 40% of lengths. This is to protect against noise on the peak which can cause 1-2 steep, short lines.s
@@ -436,7 +434,7 @@ def calculate_event_decay_point(time_array,
     The smoothing is to get rid of large 1-sample spikes that may cross the baseline but be halfway down the decay.
 
     Just in case a doublet is included in the window length (and if wanting to increase window length somewhat) the
-    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exxagerated.
+    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exagerated.
     Then the miniumm point before the maximum is taken.
     """
     decay_period_data = data[peak_idx:peak_idx + window + 1]
@@ -744,6 +742,9 @@ def consts(constant_name):
         const = 5
 
     elif constant_name == "decay_period_to_smooth":
+        const = 3
+
+    elif constant_name == "event_peak_smoothing":
         const = 3
 
     return const
