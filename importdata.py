@@ -54,25 +54,32 @@ def import_data(full_filepath, file_ext, cfgs):
         return None
 
     # Get channel type (Im or Vm), units and load data structure
-    channel_1_type, channel_1_units = get_channel_type(channel_1, cfgs)
+    channel_1_type, channel_1_units = get_channel_type(channel_1,
+                                                       cfgs,
+                                                       block_neo_file,
+                                                       channel_1_idx)
     if not channel_1_type:
         return False
 
     if channel_2 and not channel_is_proxy(channel_2_idx,
                                           block_neo_file):
         channel_2_type, channel_2_units = get_channel_type(channel_2,
-                                                           cfgs)
+                                                           cfgs,
+                                                           block_neo_file,
+                                                           channel_2_idx)
         if not channel_2_exists_and_is_different_type_to_channel_1(channel_1_type,
                                                                    channel_2_type):
             return False
 
         Data = ImportData(block_neo_file, 2, cfgs,
                           channel_1_type, channel_1_units, channel_1_idx,
-                          channel_2_type, channel_2_units, channel_2_idx)
+                          channel_2_type, channel_2_units, channel_2_idx,
+                          reader, file_ext)
     else:
         Data = ImportData(block_neo_file, 1, cfgs,
                           channel_1_type, channel_1_units, channel_1_idx,
-                          None, None, None)
+                          None, None, None,
+                          reader, file_ext)
     return Data
 
 
@@ -126,7 +133,7 @@ def load_file_with_neo(full_filepath, file_ext):
         else:
             utils.show_messagebox("Cannot Determine filetype",
                                   "Cannot determine filetype. Currently supported filetypes are:\n"
-                                  ".abf, .axgx, .wcp, .edr")
+                                  ".abf, .axgx, .axgd, .wcp, .edr")
             return None, None, None
     except:
         utils.show_messagebox("Neo Load Error", "Could not load file. Check that the "
@@ -138,6 +145,8 @@ def load_file_with_neo(full_filepath, file_ext):
     channels = reader.header["signal_channels"]
 
     return channels, reader, block_neo_file
+
+# Processing Channels --------------------------------------------------------------------------------------------------------------------------------
 
 def get_channel_data_info(cfgs, channels, reader):
     """
@@ -188,7 +197,7 @@ def get_default_channels(channels, reader):
     return channel_1, channel_1_idx, channel_2, channel_2_idx
 
 
-def get_channel_type(channel, cfgs):
+def get_channel_type(channel, cfgs, block_neo_file, channel_idx):
     """
     Find the channel type based on it's saved name or units.
 
@@ -200,12 +209,15 @@ def get_channel_type(channel, cfgs):
     """
     channel_units = channel[4].strip()
 
+    if channel_units == "\x02mV":  # TODO: not the best way to handle edge cases. As soon as a second one arises, refactor
+        channel_units = "mV"
+
     if channel_units == "mV":
         channel_type = "Vm"
     elif channel_units == "pA":
         channel_type = "Im"
     elif channel_units in ["fA", "nA", "uA", "mA", "A", "pV", "nV", "uV", "V"]:
-        channel_units, channel_type = process_non_default_channel_units(channel_units, cfgs)
+        channel_units, channel_type = process_non_default_channel_units(channel_units, cfgs,  block_neo_file, channel_idx)
         if channel_units is None:
             return None, None
     else:
@@ -214,11 +226,15 @@ def get_channel_type(channel, cfgs):
         return None, None
     return channel_type, channel_units
 
-def process_non_default_channel_units(channel_units, cfgs):
+def process_non_default_channel_units(channel_units, cfgs, block_neo_file, channel_idx):
     """
+    Handle channels not in pA or mV
+
     For some files the channel is specifier at the amplifier as 'A' generically. This is taken as the units for
     the data even though typically they are always recorded in pA. If such a file is encountered and default behaviour
-    is not specified, prompt the user to set defaults. Otherwise, load the file as per the defaults.
+    is not specified, prompt the user to set defaults, with an additional check that the header makes sense (in some cases e.g. Axograph hiles
+    the header is in A but data is scaled to nA; see show_bad_header_units_warning())
+    Otherwise, load the file as per the defaults.
 
     Data are converted at the Data class level depending on the channel_units type, so changing units to pA here means they
     will not be converted later.
@@ -235,14 +251,62 @@ def process_non_default_channel_units(channel_units, cfgs):
         channel_units = "mV" if cfgs.file_load_options["default_vm_units"]["assume_mv"] else cfgs.file_load_options["default_vm_units"]["mv_unit_to_convert"]
 
     else:
-        expected_units = "pA" if channel_type == "Im" else "mV"
-        utils.show_messagebox("Channel Units Error",
-                              "The units in the file header are {0} but are expected to be {1}. Please specify default "
-                              "file loading options in 'File' > 'File Loading Options' > Specify Default Unit Handling'.".format(channel_units,
-                                                                                                                                 expected_units))
+        show_bad_header_units_warning(channel_type, channel_units, block_neo_file, channel_idx)
         channel_units = channel_type = None
 
     return channel_units, channel_type
+
+# Handle non-pA or mV channel types ------------------------------------------------------------------------------------------------------------------
+
+def show_bad_header_units_warning(channel_type, channel_units, block_neo_file, channel_idx):
+    """
+    Prompt the user to set the correct settings for re-scaling data that is not in pA or mV.
+
+    In some cases (typically Axograph files) the header reads A but the data is scaled to nA. Here guess the most likely
+    scaling based on the range of the data and prompt the user if the guessed unit type does not match the header unit type.
+    """
+    expected_units = "pA" if channel_type == "Im" else "mV"
+    message_string = "The units in the file header are {0} but are expected to be {1}. Please specify default " \
+                     "file loading options in 'File' > 'File Loading Options' > Specify Default Unit Handling'.".format(channel_units,
+                                                                                                                        expected_units)
+
+    guessed_units = check_if_header_units_are_correct(block_neo_file, channel_idx, channel_type)
+    if guessed_units != channel_units:
+        extra_warning = "\nWARNING! Header units were read as {0} but are most likely {1}. Try {1} first in File Load Options".format(channel_units,
+                                                                                                                                      guessed_units)
+        message_string += extra_warning
+
+    utils.show_messagebox("Channel Units Error",
+                          message_string)
+
+def check_if_header_units_are_correct(block_neo_file, channel_idx, im_or_vm):
+    """
+    Typically data properly scaled to Im / mV will be in the 0-2000 range. The only instance
+    this could cause problems is for very large stimulus registering > 2000, but these are rarely seen pA / mV.
+    """
+    channel_data = block_neo_file.segments[0].analogsignals[channel_idx].magnitude
+    channel_range = max(channel_data) - min(channel_data)
+
+    if im_or_vm == "Im":
+        unit_ranges = {"fA": (2000, 9999),
+                       "pA": (1, 1999),
+                       "nA": (0.001, 0.999),
+                       "uA": (0.000001, 0.000999),
+                       "mA": (0.000000001, 0.000000999),
+                       "A":  (0.000000000001, 0.000000000999),
+                       }
+    elif im_or_vm == "Vm":
+        unit_ranges = {"pV": (100000, 999999),
+                       "nV": (10000, 99999),
+                       "uV": (2000, 9999),
+                       "mV": (1, 1999),
+                       "V": (0.001, 0.999),
+                       }
+
+    for unit, range_ in unit_ranges.items():
+        if range_[0] < abs(channel_range) < range_[1]:
+            return unit
+    return "undefined: contact Easy Electrophysiology."
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Data Class
@@ -261,7 +325,8 @@ class ImportData:
     """
     def __init__(self, block_neo_file, num_chans, cfgs,
                  channel_1_type, channel_1_units, channel_1_idx,
-                 channel_2_type, channel_2_units, channel_2_idx):
+                 channel_2_type, channel_2_units, channel_2_idx,
+                 reader, file_ext):
 
         self.load_setting = cfgs.file_load_options["force_load_options"]
         self.num_recs = len(block_neo_file.segments)
@@ -284,6 +349,7 @@ class ImportData:
         self.channel_1_type = channel_1_type
         self.channel_2_type = channel_2_type
         self.recording_type = None
+        self.tags = ""
 
         if self.load_setting is None and channel_1_type == "Vm" or \
                 self.load_setting == "current_clamp":
@@ -311,8 +377,12 @@ class ImportData:
                 self.im_array = self.extract_data_from_array(channel_2_idx, block_neo_file)
                 self.im_units = channel_2_units
 
+        else:
+            self.handle_generate_axon_protocol(reader, cfgs)
+
         self.time_array, self.t_start, self.t_stop = self.extract_time_array(block_neo_file)
         self.check_and_clean_data()
+        self.update_tags(reader, file_ext)
         return
 
     def check_and_clean_data(self):
@@ -320,7 +390,21 @@ class ImportData:
         Convert V to mV,
         nA to pA,
         ms to s
+
+        If force analysis type the units may be swapped, in which case swap the conversion tables
         """
+        if self.time_units == "ms":
+            self.t_start /= 1000
+            self.t_stop /= 1000
+            self.time_array /= 1000
+            self.time_units = "s"
+
+        if self.t_start != 0:
+            self.time_offset = np.array(self.t_start)
+
+        if self.im_units == "mV" or self.vm_units == "pA":
+            return
+
         conversion_to_pa_table = core_analysis_methods.get_conversion_to_pa_table()
         conversion_to_mv_table = core_analysis_methods.get_conversion_to_mv_table()
 
@@ -331,15 +415,6 @@ class ImportData:
         if self.vm_units and self.vm_units != "mV":
             self.vm_array *= conversion_to_mv_table[self.vm_units]
             self.vm_units = "mV"
-
-        if self.time_units == "ms":
-            self.t_start /= 1000
-            self.t_stop /= 1000
-            self.time_array /= 1000
-            self.time_units = "s"
-
-        if self.t_start != 0:
-            self.time_offset = np.array(self.t_start)
 
     def extract_time_array(self, block_neo_file):
         """
@@ -371,5 +446,53 @@ class ImportData:
 
         return array
 
+    def extract_axon_protocol(self, reader):
+        """
+        https://neo.readthedocs.io/en/stable/io.html#neo.io.AxonIO
+        """
+        array = utils.np_empty_nan((self.num_recs,
+                                    self.num_samples))
+        protocol = reader.read_protocol()
+        units = protocol[0].analogsignals[0].units.dimensionality.string
+        for rec in range(self.num_recs):
+            array[rec] = np.squeeze(protocol[rec].analogsignals[0].magnitude)
 
+        return array, units
 
+    def handle_generate_axon_protocol(self, reader, cfgs):
+        """
+        Coordinate the generation of axon protocol. This must be done in current clamp mode. If settings are correct,
+        the Im protocol will generated and loaded to the second channel, handling any errors.
+        """
+        if cfgs.file_load_options["select_channels_to_load"]["on"] and \
+            cfgs.file_load_options["generate_axon_protocol"]:
+
+            if self.recording_type != "current_clamp":
+                utils.show_messagebox("Axon Protocol Error",
+                                      "Must be in current clamp mode to load Axon Im protocol from header")
+                return
+
+            try:
+                im_array, im_units = self.extract_axon_protocol(reader)
+            except:
+                utils.show_messagebox("Axon Protocol Error",
+                                      "Could not generate Axon protocol. Please contact support@easyelectrophysiology.com")
+                return
+
+            self.im_units = im_units
+            self.im_array = im_array
+            self.channel_2_type = "Im"
+            self.num_data_channels = 2
+
+    def update_tags(self, reader, file_ext):
+        """
+        Update self.tags with tags (Axon Instruments feature only)
+        """
+        if file_ext.upper() == ".ABF":
+            all_tags = ""
+            for i in range(len(reader._axon_info["listTag"])):
+                tag = reader._axon_info["listTag"][i]["sComment"].decode("utf-8").strip() + " "
+                if i > 0:
+                    tag = "Tag {0}: ".format(str(i + 1)) + tag
+                all_tags += tag
+            self.tags = all_tags

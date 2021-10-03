@@ -59,11 +59,6 @@ def auto_find_spikes(data,
     thr["N"] = core_analysis_methods.quick_get_time_in_samples(data.ts,
                                                                search_region_in_s)
 
-    thr["time_bound_start_sample"], \
-        thr["time_bound_stop_sample"] = get_bound_times_in_sample_units(time_bounds,
-                                                                        bound_start_or_stop,
-                                                                        data,
-                                                                        rec_from)
     # Find Spike Threshold per Record
     if thr["threshold_type"] == "auto_record":
         spike_info = spikes_from_auto_threshold_per_record(data,
@@ -102,7 +97,15 @@ def spikes_from_auto_threshold_per_record(data,
 
         vm = data.vm_array[rec]
         vm_diff = data.norm_first_deriv_vm[rec]
-        candidate_spikes_idx = find_candidate_spikes(vm_diff, thr)
+
+        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
+        time_bound_start_sample, \
+            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                     bound_start_or_stop,
+                                                                     data,
+                                                                     rec)
+        candidate_spikes_idx = find_candidate_spikes(vm_diff, thr,
+                                                     time_bound_start_sample, time_bound_stop_sample)
 
         if candidate_spikes_idx.any():
 
@@ -143,8 +146,14 @@ def spikes_from_auto_threshold_per_spike(data,
         vm = data.vm_array[rec]
         vm_diff = data.norm_first_deriv_vm[rec]
 
-        candidate_spikes_idx = find_candidate_spikes(vm_diff,
-                                                     thr)
+        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
+        time_bound_start_sample, \
+            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                     bound_start_or_stop,
+                                                                     data,
+                                                                     rec)
+        candidate_spikes_idx = find_candidate_spikes(vm_diff, thr,
+                                                     time_bound_start_sample, time_bound_stop_sample)
         if candidate_spikes_idx.any():
             peak_vms, __, peak_idxs, peak_times = clean_and_amplitude_thr_candidate_spikes_and_extract_paramters(vm,
                                                                                                                  candidate_spikes_idx,
@@ -164,7 +173,8 @@ def spikes_from_auto_threshold_per_spike(data,
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 def find_candidate_spikes(vm_diff,
-                          thr):
+                          thr,
+                          time_bound_start_sample, time_bound_stop_sample):
     """
     Find candidate spikes based on user-specified thresholds, fully vectorised for speed.
 
@@ -178,12 +188,12 @@ def find_candidate_spikes(vm_diff,
     are repeat instaces of the same spike.
     """
     samples_above = np.where(vm_diff > thr["auto_thr_rise"])[0].squeeze()
-    samples_above = samples_above[samples_above >= int(thr["time_bound_start_sample"] + thr["N"])]  # only consider points within boundary
-    samples_above = samples_above[samples_above < int(thr["time_bound_stop_sample"] - thr["N"])]
+    samples_above = samples_above[samples_above >= int(time_bound_start_sample + thr["N"])]  # only consider points within boundary
+    samples_above = samples_above[samples_above < int(time_bound_stop_sample - thr["N"])]
 
     samples_below = np.where(vm_diff < thr["auto_thr_fall"])[0].squeeze()
-    samples_below = samples_below[samples_below >= int(thr["time_bound_start_sample"] + thr["N"])]
-    samples_below = samples_below[samples_below < int(thr["time_bound_stop_sample"] - thr["N"])]
+    samples_below = samples_below[samples_below >= int(time_bound_start_sample + thr["N"])]
+    samples_below = samples_below[samples_below < int(time_bound_stop_sample - thr["N"])]
 
     n_samples_above = utils.np_empty_nan((len(samples_above), thr["N"]))  # make a sample x N array for every sample above thr,
     n_samples_above[:, :] = np.linspace(samples_above, samples_above + thr["N"] - 1, thr["N"]).transpose()
@@ -261,14 +271,22 @@ def find_spikes_above_record_threshold(data,
     spike_info = [[] for rec in range(data.num_recs)]
 
     # cut vm and time down to time period to be analysed
-    time_bound_start_sample, \
-        time_bound_stop_sample = get_bound_times_in_sample_units(time_bounds,
-                                                                 bound_start_or_stop,
-                                                                 data,
-                                                                 rec_from)
+    all_time_bound_start_sample = [[] for __ in range(data.num_recs)]
+    all_time_bound_stop_sample = [[] for __ in range(data.num_recs)]
+    bound_vm_array = [[] for __ in range(data.num_recs)]
+    bound_time_array = [[] for __ in range(data.num_recs)]
+    for rec in range(data.num_recs):
 
-    bound_vm_array = data.vm_array[:, time_bound_start_sample:time_bound_stop_sample]
-    bound_time_array = data.time_array[:, time_bound_start_sample:time_bound_stop_sample]
+        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
+        time_bound_start_sample, \
+            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                     bound_start_or_stop,
+                                                                     data,
+                                                                     rec)
+        all_time_bound_start_sample[rec] = time_bound_start_sample
+        all_time_bound_stop_sample[rec] = time_bound_stop_sample
+        bound_vm_array[rec] = data.vm_array[rec, time_bound_start_sample:time_bound_stop_sample]
+        bound_time_array[rec] = data.time_array[rec, time_bound_start_sample:time_bound_stop_sample]
 
     # Count Spikes
     # get vector of vm indices above threshold (with length either 1 when threshold
@@ -276,20 +294,22 @@ def find_spikes_above_record_threshold(data,
     if np.size(threshold) == 1:
         threshold = np.tile(threshold, (data.num_recs, 1))
 
-    above_threshold_vm_matrix = utils.np_empty_nan((data.num_recs,
-                                                    len(bound_vm_array[0, :])))
+    above_threshold_vm_matrix = [[] for __ in range(data.num_recs)]
     for rec in range(rec_from, upper_inclusive_rec_bound):
-        above_threshold_vm_matrix[rec, :] = np.ma.masked_array(bound_vm_array[rec, :],
-                                                               np.invert(bound_vm_array[rec, :] > threshold[rec]),
-                                                               fill_value=np.nan).filled()
+
+        above_threshold_vm_matrix[rec] = np.ma.masked_array(bound_vm_array[rec],
+                                                            np.invert(bound_vm_array[rec] > threshold[rec]),
+                                                            fill_value=np.nan).filled()
 
     # Find contiguous above-threshold regions and get peak information of these regions
     for rec in range(rec_from, upper_inclusive_rec_bound):
-        cum_ap_index = index_out_continuos_above_threshold_samples(
-                                                                   above_threshold_vm_matrix[rec, :])
+
+        cum_ap_index = index_out_continuous_above_threshold_samples(
+                                                                   above_threshold_vm_matrix[rec])
+
         # get indexed vm and time of > thr vm
         peaks_idx = get_peaks_idx_from_cum_idx(cum_ap_index,
-                                               bound_vm_array[rec, :],
+                                               bound_vm_array[rec],
                                                event_dir="positive")
 
         # Using peak indices, save the vm peak, its time and idx
@@ -297,16 +317,16 @@ def find_spikes_above_record_threshold(data,
         if np.any(peaks_idx):  # len(above_threshold_vm) > 0:
             spike_info[rec] = {}
             for peak_idx, peak_time, peak_vm in zip(peaks_idx,
-                                                    bound_time_array[rec, :][peaks_idx],
-                                                    bound_vm_array[rec, :][peaks_idx]):
+                                                    bound_time_array[rec][peaks_idx],
+                                                    bound_vm_array[rec][peaks_idx]):
                 spike_info[rec][str(peak_time)] = [peak_vm,
-                                                   peak_idx + time_bound_start_sample]  # add back the first bound
+                                                   peak_idx + all_time_bound_start_sample[rec]]  # add back the first bound
         else:
             spike_info[rec] = 0
 
     return spike_info
 
-def index_out_continuos_above_threshold_samples(binary_ts, smooth=False):
+def index_out_continuous_above_threshold_samples(binary_ts, smooth=False):
     """
     Create an vector of length = number of samples where each spike is batched to a cumulatve index i.e [00011100022200033],
     0 when data < thr or cumsum > 1...N spikes are above threshold
@@ -527,15 +547,15 @@ def update_rheobase_after_im_round(round_or_not_round, analysis_df):
 
         rheobase_rec = analysis_df.loc[0, "rheobase"]
         if round_or_not_round == "round":
-            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_round"]
+            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta_round"]
 
         elif round_or_not_round == "not_round":
-            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_avg"]
+            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta"]
 
     return analysis_df
 
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------------------------------------------- TODO: use scipy for linregress
 # Input Resistance / Im Calculation Methods
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -611,16 +631,6 @@ def calculate_baseline_minus_inj(data,
     """
     upper_inclusive_rec_bound = rec_to + 1
 
-    bounds_sample = []
-    for bound, start_or_stop in zip(bounds,
-                                    bounds_start_or_stop):
-        bounds_sample.append(
-                             convert_time_to_samples(bound,
-                                                     start_or_stop,
-                                                     time_array,
-                                                     min_max_time,
-                                                     rec_from,
-                                                     add_offset_back=True))
     num_recs = len(data)
     counted_recs = utils.np_empty_nan(num_recs)
     avg_over_period = utils.np_empty_nan(num_recs)
@@ -628,12 +638,39 @@ def calculate_baseline_minus_inj(data,
     steady_states = utils.np_empty_nan(num_recs)
 
     for rec in range(rec_from, upper_inclusive_rec_bound):
+
+        bounds_sample = []
+        for bound, start_or_stop in zip(bounds,
+                                        bounds_start_or_stop):
+
+            processed_bound = check_bounds_are_in_rec_or_single_form(bound,
+                                                                     rec)
+
+            bounds_sample.append(
+                convert_time_to_samples(processed_bound,
+                                        start_or_stop,
+                                        time_array,
+                                        min_max_time,
+                                        rec,
+                                        add_offset_back=True))
+
         baselines[rec] = np.mean(data[rec][bounds_sample[0]:bounds_sample[1]])
         steady_states[rec] = np.mean(data[rec][bounds_sample[2]:bounds_sample[3]])
         avg_over_period[rec] = steady_states[rec] - baselines[rec]
         counted_recs[rec] = rec + 1
 
     return counted_recs, avg_over_period, baselines, steady_states
+
+def check_bounds_are_in_rec_or_single_form(bound, rec):
+    """
+    If boundaries are generated by linear region, they are 1 x rec lists.
+    If they are generated by Input Im protocol, they are scalar and the same
+    for all recs.
+    """
+    if type(bound) == list:
+        return bound[rec]
+    else:
+        return bound
 
 def find_negative_peak(vm,
                        time_array,
@@ -810,12 +847,18 @@ def analyse_spike_kinetics(cfgs,
                                                                                                                            cfgs.skinetics["interp_200khz"])
 
     half_amp = thr_vm + (amplitude / 2)
-    rise_mid_time, rise_mid_vm, decay_mid_time, decay_mid_vm, fwhm = core_analysis_methods.calculate_fwhm(thr_to_peak_time,
-                                                                                                          thr_to_peak_vm,
-                                                                                                          peak_to_end_time,
-                                                                                                          peak_to_end_vm,
-                                                                                                          half_amp,
-                                                                                                          interp=cfgs.skinetics["interp_200khz"])
+    rise_mid_time, rise_mid_vm, decay_mid_time, decay_mid_vm, \
+        fwhm, __, __ = core_analysis_methods.calculate_fwhm(thr_to_peak_time,
+                                                            thr_to_peak_vm,
+                                                            peak_to_end_time,
+                                                            peak_to_end_vm,
+                                                            half_amp,
+                                                            interp=cfgs.skinetics["interp_200khz"])
+
+    rise_max_slope_ms, rise_max_slope_fit_time, rise_max_slope_fit_data, \
+        decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data = run_skinetics_max_slope(thr_to_peak_time, thr_to_peak_vm,
+                                                                                                         peak_to_end_time, peak_to_end_vm,
+                                                                                                         data, cfgs)
     # Save Outputs
     output = cfgs.skinetics_params()
     output["thr"] = {"time": thr_time, "vm": thr_vm}
@@ -830,7 +873,47 @@ def analyse_spike_kinetics(cfgs,
                             "decay_max_vm": decay_max_vm, "decay_time_ms": decay_time * 1000}
     output["amplitude"] = {"vm": amplitude}
 
+    output["max_rise"] = {"max_slope_ms": rise_max_slope_ms, "fit_time": rise_max_slope_fit_time, "fit_data": rise_max_slope_fit_data}
+    output["max_decay"] = {"max_slope_ms": decay_max_slope_ms, "fit_time": decay_max_slope_fit_time, "fit_data": decay_max_slope_fit_data}
+
     return output
+
+def run_skinetics_max_slope(thr_to_peak_time,
+                            thr_to_peak_vm,
+                            peak_to_end_time,
+                            peak_to_end_vm,
+                            data,
+                            cfgs):
+    """
+    """
+    if cfgs.skinetics["max_slope"]["on"]:
+
+        rise_max_slope_ms, rise_max_slope_fit_time, rise_max_slope_fit_data = core_analysis_methods.calculate_max_slope_rise_or_decay(thr_to_peak_time,
+                                                                                                                                      thr_to_peak_vm,
+                                                                                                                                      start_idx=0,
+                                                                                                                                      stop_idx=len(thr_to_peak_time) - 1,
+                                                                                                                                      window_samples=cfgs.skinetics["max_slope"]["rise_num_samples"],
+                                                                                                                                      ts=data.ts,
+                                                                                                                                      smooth_settings={"on": False, "num_samples": 1},
+                                                                                                                                      argmax_func=np.argmax)
+
+        decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data = core_analysis_methods.calculate_max_slope_rise_or_decay(peak_to_end_time,
+                                                                                                                                         peak_to_end_vm,
+                                                                                                                                         start_idx=0,
+                                                                                                                                         stop_idx=len(peak_to_end_time) - 1,
+                                                                                                                                         window_samples=cfgs.skinetics["max_slope"]["decay_num_samples"],
+                                                                                                                                         ts=data.ts,
+                                                                                                                                         smooth_settings={"on": False, "num_samples": 1},
+                                                                                                                                         argmax_func=np.argmin)
+    else:
+        rise_max_slope_ms = decay_max_slope_ms = "off"
+        rise_max_slope_fit_time = [np.nan]
+        rise_max_slope_fit_data = [np.nan]
+        decay_max_slope_fit_time = [np.nan]
+        decay_max_slope_fit_data = [np.nan]
+
+    return rise_max_slope_ms, rise_max_slope_fit_time, rise_max_slope_fit_data, \
+        decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data
 
 def calculate_peak_to_end(vm,
                           time_,
@@ -919,7 +1002,3 @@ def convert_time_to_samples(timepoint,
             idx -= 1
 
     return idx
-
-
-
-

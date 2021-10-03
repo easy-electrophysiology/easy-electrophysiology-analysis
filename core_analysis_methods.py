@@ -17,6 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import numpy as np
 from utils import utils
 import scipy
+from ephys_data_methods import voltage_calc
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Curve Fitting
@@ -79,6 +80,11 @@ def triexp_decay_function(x, coefs):
 
     return b0 + b1 * np.exp(-x / tau1) + b2 * np.exp(-x / tau2) + b3 * np.exp(-x / tau3)
 
+def gaussian_function(x, coefs):
+    a, mu, sigma = coefs
+    gauss = a * np.exp(-0.5 * ((x - mu) / sigma)**2)
+    return gauss
+
 # Least Squares Cost Functions
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -95,12 +101,16 @@ def biexp_event_least_squares_cost_function(coefs, x, y):
 def biexp_decay_least_squares_cost_function(coefs, x, y):
     yhat = biexp_decay_function(x,
                                 coefs)
-    return y - yhat
+    return yhat - y
 
 def triexp_decay_least_squares_cost_function(coefs, x, y):
     yhat = triexp_decay_function(x,
                                  coefs)
-    return y - yhat
+    return yhat - y
+
+def gaussian_least_squares_cost_function(coefs, x, y):
+    y_hat = gaussian_function(x, coefs)
+    return y_hat - y
 
 # Fit Curve ------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -113,7 +123,7 @@ def fit_curve(analysis_name,
               normalise_time=True):
     """
     Fit curve of type monoexponential ("monoexp"), biexponential decay ("biexp_decay"),
-    biexponential event ("biexp_event") and triponential ("triexp")
+    biexponential event ("biexp_event") and triponential ("triexp"), or "gaussian"
 
     INPUTS:
         analysis name: name of curve to fit (above; str)
@@ -142,12 +152,23 @@ def fit_curve(analysis_name,
         coefs = scipy.optimize.least_squares(get_least_squares_fit_function(analysis_name), x0=initial_est, args=(x_to_fit, y_to_fit), bounds=bounds)
         coefs = coefs.x
     except:
-        return False, False
+        return False, False, False
 
     func = get_fit_functions(analysis_name)
     fit = func(x_to_fit, coefs)
+    r2 = calc_r2(y_to_fit, fit)
 
-    return coefs, fit
+    return coefs, fit, r2
+
+def calc_r2(y, y_hat):
+    """
+    Calculate the r-squared for a fit to data
+    """
+    y_bar = np.mean(y)
+    SST = np.sum((y - y_bar)**2)
+    RSS = np.sum((y - y_hat)**2)
+    r2 = 1 - RSS / SST
+    return r2
 
 # Bounds and Initial Estimates -----------------------------------------------------------------------------------------------------------------------
 
@@ -163,7 +184,9 @@ def get_curve_fit_bounds(analysis_name):
               "biexp_event": ((-np.inf, -np.inf, 0, 0),
                               (np.inf, np.inf, np.inf, np.inf)),
               "triexp":  ((-np.inf, -np.inf, 0, -np.inf, 0, -np.inf, 0),
-                          (np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf))
+                          (np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf)),
+              "gaussian": ((-np.inf, -np.inf, -np.inf),
+                           (np.inf, np.inf, np.inf)),
               }
 
     return bounds[analysis_name]
@@ -197,6 +220,9 @@ def get_initial_est(analysis_name,
                                                                               y_to_fit)
         initial_est = (est_offset, est_slope, est_tau / 3, est_slope, est_tau / 3, est_slope, est_tau / 3)
 
+    elif analysis_name == "gaussian":
+        initial_est = get_gaussian_initial_est(x_to_fit, y_to_fit)
+
     return initial_est
 
 def get_exponential_function_initial_est(x_to_fit,
@@ -225,9 +251,11 @@ def get_biexp_event_initial_est(x_to_fit,
                                 direction):
     """
     Get the Curve Fitting starting estimates for the biexpoentnial event function.
+
+    Since v2.3.0 rise and decay initial estimates are always taken from user configs,
+    and filled in to the returned initial_est.
     """
-    default_rise = 0.0005
-    default_decay = 0.005
+    default_rise = default_decay = None
 
     est_offset, est_slope, __ = get_exponential_function_initial_est(x_to_fit, y_to_fit)
 
@@ -239,6 +267,15 @@ def get_biexp_event_initial_est(x_to_fit,
 
     return initial_est
 
+def get_gaussian_initial_est(x, y):
+    """
+    Return the initial estimate of parameters for fitting gaussian.
+    """
+    a = np.max(y)
+    mu = np.sum(x * y) / np.sum(y)
+    sigma = np.sqrt(np.sum(y * (x - mu)**2) / np.sum(y))
+    return a, mu, sigma
+
 # Convenience Functions ------------------------------------------------------------------------------------------------------------------------------
 
 def get_least_squares_fit_function(analysis_name):
@@ -248,7 +285,9 @@ def get_least_squares_fit_function(analysis_name):
     least_squares_fit_functions = {"monoexp": monoexp_least_squares_cost_function,
                                    "biexp_decay": biexp_decay_least_squares_cost_function,
                                    "biexp_event": biexp_event_least_squares_cost_function,
-                                   "triexp": triexp_decay_least_squares_cost_function}
+                                   "triexp": triexp_decay_least_squares_cost_function,
+                                   "gaussian": gaussian_least_squares_cost_function,
+                                   }
     return least_squares_fit_functions[analysis_name]
 
 def get_fit_functions(analysis_name):
@@ -258,7 +297,8 @@ def get_fit_functions(analysis_name):
     fit_functions = {"monoexp": monoexp_function,
                      "biexp_decay": biexp_decay_function,
                      "biexp_event": biexp_event_function,
-                     "triexp": triexp_decay_function}
+                     "triexp": triexp_decay_function,
+                     "gaussian": gaussian_function}
 
     return fit_functions[analysis_name]
 
@@ -339,7 +379,11 @@ def method_i_threshold(cfgs,
 
     g = second_deriv / first_deriv
     lower_bound = cfgs.skinetics["method_I_lower_bound"]
-    g[first_deriv <= lower_bound] = np.nan  # 0
+    g[first_deriv <= lower_bound] = np.nan
+
+    if np.all(np.isnan(g)):
+        return False
+
     idx = np.nanargmax(g)
     return idx
 
@@ -350,7 +394,11 @@ def method_ii_threshold(cfgs,
 
     h = ((third_deriv * first_deriv) - (second_deriv ** 2)) / (first_deriv ** 3)
     lower_bound = cfgs.skinetics["method_II_lower_bound"]
-    h[first_deriv <= lower_bound] = np.nan  # 0
+    h[first_deriv <= lower_bound] = np.nan
+
+    if np.all(np.isnan(h)):
+        return False
+
     idx = np.nanargmax(h)
     return idx
 
@@ -421,6 +469,9 @@ def calculate_fwhm(start_to_peak_time,
     half_amp: scalar value, the amplitude / 2 representing the true half-maximum data
     interp: bool, interpolate data to 200 kHz before calculting fwhm.
     """
+    orig_rise_mid_idx = np.abs(half_amp - start_to_peak_data).argmin()  # save the un-interpred index to calculate average event from
+    orig_decay_mid_idx = np.abs(half_amp - peak_to_end_data).argmin()
+
     if interp:
         start_to_peak_data, start_to_peak_time = twohundred_kHz_interpolate(start_to_peak_data, start_to_peak_time)
         peak_to_end_data, peak_to_end_time = twohundred_kHz_interpolate(peak_to_end_data, peak_to_end_time)
@@ -434,7 +485,7 @@ def calculate_fwhm(start_to_peak_time,
     fall_midtime = peak_to_end_time[decay_mid_idx]
     fwhm = fall_midtime - rise_midtime
 
-    return rise_midtime, rise_midpoint, fall_midtime, fall_midpoint, fwhm
+    return rise_midtime, rise_midpoint, fall_midtime, fall_midpoint, fwhm, orig_rise_mid_idx, orig_decay_mid_idx
 
 def calc_rising_slope_time(slope_data,
                            slope_time,
@@ -518,6 +569,79 @@ def calc_falling_slope_time(slope_data,
 
     return max_time, max_data, min_time, min_data, decay_time
 
+def calculate_max_slope_rise_or_decay(time_,
+                                      data,
+                                      start_idx,
+                                      stop_idx,
+                                      window_samples,
+                                      ts,
+                                      smooth_settings,
+                                      argmax_func):
+    """
+    Calculate the maximum slope over a period of data, size 1 ... N. The regression over M points is calculated from
+    1:M ... N-M:M. The regression is not calculated across points N-M:N. If M is larger than N, no max slope is calculated.
+
+    For N = 2, slope is calculated as rise over run for performance increase.
+
+    INPUTS:
+        time_: all timepoints in a record, 1...Z
+        data:  all datapoints in a record, 1...Z
+        start_idx: start index for the period to search the max slope
+        stop_idx: stop index for the period to search the max slope (1...N)
+        window_samples: number of samples to calculate the regression over, 1...M
+        ts: sample spacing in seconds
+        smooth_settings: dict with settings on the smoothing: {"on": bool_, "num_samples": num samples to smooth}
+        argmax_func: np.max() or np.min() depending on if the slope is positive or negative.
+
+    NOTES:
+        It was attempted to improve speed using statsmodel rolling_ols but it made little difference.
+    """
+    stop_idx -= window_samples
+    n_samples = stop_idx - start_idx + 1
+
+    if n_samples < 1:
+        return [np.nan], [np.nan], [np.nan]
+
+    if smooth_settings["on"]:
+        data = voltage_calc.quick_moving_average(data,
+                                                 smooth_settings["num_samples"])
+    if window_samples == 2:
+
+        idx = np.arange(start_idx,
+                        stop_idx + 1)
+        time_step_ms = ts * 1000
+
+        windowed_deriv = (data[idx + 1] - data[idx]) / time_step_ms
+        max_slope_idx = argmax_func(windowed_deriv)
+        max_slope_ms = windowed_deriv[max_slope_idx]
+        max_slope_idx += start_idx
+
+        fit_time = np.array([time_[max_slope_idx],
+                             time_[max_slope_idx + 1]])
+        fit_data = np.array([data[max_slope_idx],
+                             data[max_slope_idx + 1]])
+    else:
+
+        idx = np.tile(np.arange(start_idx, start_idx + window_samples),
+                      (n_samples, 1)) + np.atleast_2d(np.arange(n_samples)).T
+        all_x = time_[idx]
+        all_y = data[idx]
+
+        params = utils.np_empty_nan((n_samples, 2))
+        for i in range(n_samples):
+            x = all_x[i, :]
+            y = all_y[i, :]
+            params[i, 0], params[i, 1], __, __, __ = scipy.stats.linregress(x, y)
+
+        max_slope_idx = argmax_func(params[:, 0])
+        slope, intercept = params[max_slope_idx, :]
+
+        fit_time = all_x[max_slope_idx, :]
+        fit_data = fit_time * slope + intercept
+        max_slope_ms = slope / 1000
+
+    return max_slope_ms, fit_time, fit_data
+
 def twohundred_kHz_interpolate(vm,
                                time_):
     """
@@ -531,7 +655,7 @@ def twohundred_kHz_interpolate(vm,
     return vm, time_array
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Data Manipulation
+# Data Tools
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Filter
@@ -730,35 +854,29 @@ def fit_polynomial(x,
 # Cumulative Probability
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-def process_frequency_data_for_cum_prob(event_times):
+def process_frequency_data_for_cum_prob(event_times, rec_starting_ev_idx):
     """
     Process event times for cumulative probability graphs.
-    Check events are sorted (there has been a problem somewhere if events are not in order)
+
+    event_times = list of event times (float)
+
+    rec_starting_ev_idx = idx of event times for the analysed record
+
     Start from zero to find the event-interval for the first event, all inter-event intervals.
     Also, return labels of the event numbers.
     """
     assert np.array_equal(event_times, np.sort(event_times)), "process_frequency_data_for_cum_prob times not sorted"
 
-    data = np.concatenate([[0],
-                           event_times])
-    data = np.diff(data)
+    data = np.diff(event_times)
 
-    sort_idx = [str(i) + "-" + str(i + 1) for i in range(len(event_times))]
+    sort_idx = []
+    for ev_num in range(1, len(event_times)):
+        sort_idx.append(str(ev_num + rec_starting_ev_idx) + "-" + str(ev_num + rec_starting_ev_idx + 1))
 
     return data, sort_idx
 
 
-def process_decay_data_for_cum_prob(decay_taus):
-    """
-    Return sorted decay data for cum prob binning,
-    and array of event labels.
-    """
-    data = np.sort(decay_taus)
-    sort_idx = np.argsort(decay_taus) + 1
-    return data, sort_idx
-
-
-def process_amplitude_data_for_cum_prob(amplitudes):
+def process_amplitude_for_frequency_table(amplitudes):
     """
     Return sorted, absolute amplitudes for cum prob analysis,
     and event numbers or labelling.
@@ -768,8 +886,105 @@ def process_amplitude_data_for_cum_prob(amplitudes):
 
     return data, sort_idx
 
+def process_non_negative_param_for_frequency_table(non_neg_param):
+    """
+    Return sorted non-negative parameter (decay data)
+    for cum prob binning, and array of event labels.
+    """
+    data = np.sort(non_neg_param)
+    sort_idx = np.argsort(non_neg_param) + 1
+    return data, sort_idx
 
-def calc_cumulative_frequency(data, bin_divisor):
+def get_num_bins_from_settings(data, settings, parameter):
+    """
+    Calculate the bin number based on user settings.
+    see calc_cumulative_probability_or_histogram() for inputs
+    """
+    binning_method = settings["binning_method"]
+    n_samples = len(data)
+
+    if binning_method == "auto":
+        try:
+            num_bins = len(np.histogram_bin_edges(data, bins="auto"))
+        except MemoryError:  # can occur with this function when bin sizes are very small.
+            num_bins = len(np.histogram_bin_edges(data, bins="sqrt"))
+
+    elif binning_method == "custom_binnum":
+        num_bins = int(settings["custom_binnum"]) if settings["custom_binnum"] <= n_samples else n_samples
+
+    elif binning_method == "custom_binsize":
+        num_bins = np.round(np.max(data / settings["custom_binsize"][parameter])).astype(int)  # all data is bounded by min 0 so just use max not range
+
+    elif binning_method == "num_events_divided_by":
+        num_bins = np.round(len(data) / settings["divide_by_number"]).astype(int)
+
+    if num_bins > len(data) or num_bins == 0:
+        num_bins = len(data)
+    elif num_bins < 2:
+        num_bins = 2
+
+    return num_bins
+
+def calc_cumulative_probability_or_histogram(data, settings, parameter, legacy_bin_sizes):
+    """
+    Return the histogram or cumulative probabilites of 'data'.
+
+    INPUTS:
+        data: n x 1 array of values (here Event parameter values e..g inter-event intervals)
+        settings: dict of settings with fields:
+            'plot_type': 'cum_prob' or 'hist'
+            'binning method': 'auto' (numpy implementdation), 'custom_binnum', 'custom_binsize', 'num_events_divided_by'
+            'custom_binnum': number of bins to divded the data into
+            'custom_binsize': data range of bins, same as max(data) / binnum
+            'divide_by_number': divisor if 'num_events_divided_by' option is chosen
+            'x_axis_display': 'bin_centers', 'left_edge', 'right_edge'
+
+        paramter: event paramter beign analysed (frequency, amplitude, decay_tay, decay_percent)
+        legacy_bin_sizes: bool
+    """
+    cum_prob_or_hist = settings["plot_type"]
+
+    if len(data) < 4:
+        return False, False, False, False
+
+    # Calculate number of bins based on user settings
+    num_bins = get_num_bins_from_settings(data, settings, parameter)
+
+    # Use bin range from 0 - max of data, previously a little extra padding was added
+    # similar to scipy implementation, but using the data is more interpretable for end user.
+    if legacy_bin_sizes:
+        s = (np.max(data) - np.min(data)) / (2. * (num_bins - 1.))
+    else:
+        s = 0
+    max_ = np.max(data) + s
+    limits = (np.min(data),
+              max_)
+
+    # Calculate the y values and bin edges for the histogram / cumulative probability
+    if cum_prob_or_hist == "cum_prob":
+        y_values, bin_edges, binsize = calc_cumulative_frequency(data, num_bins, limits)
+
+    elif cum_prob_or_hist == "hist":
+        y_values, bin_edges, binsize = calc_histogram(data, num_bins, limits)
+
+    # format the x values based on user settings
+    x_values = format_bin_edges(bin_edges, settings["x_axis_display"])
+
+    return y_values, x_values, binsize, num_bins
+
+def calc_histogram(data, num_bins, limits):
+    """
+    """
+    info = np.histogram(data,
+                        bins=num_bins,
+                        range=limits)
+    y_values = info[0]
+    bin_edges = info[1]
+    binsize = bin_edges[1] - bin_edges[0]
+
+    return y_values, bin_edges, binsize
+
+def calc_cumulative_frequency(data, num_bins, limits):
     """
     Calculate the binned cumulative probability from data processed
     for cum prob analysis.
@@ -783,23 +998,38 @@ def calc_cumulative_frequency(data, bin_divisor):
         cum_prob: 1 x bin cumulative probability (in the interval 0 1)
         x_values: cumulative bins
     """
-    if len(data) < 4:
-        return False, False
+    counts, bin_edges, binsize = calc_histogram(data, num_bins, limits)
 
-    # default max but lower limit = 0
-    num_bins = np.floor(len(data) / bin_divisor).astype(int)
-    s = (np.max(data) - np.min(data)) / (2. * (num_bins - 1.))
-    max_ = np.max(data) + s
+    cdf = counts / np.sum(counts)
+    pdf = np.cumsum(cdf)
 
-    info = scipy.stats.cumfreq(data,
-                               numbins=num_bins,
-                               defaultreallimits=(0, max_))
+    return pdf, bin_edges, binsize
 
-    cum_prob = info.cumcount / len(data)
-    x_values = info.lowerlimit + np.linspace(0,
-                                             info.binsize * len(info.cumcount),
-                                             info.cumcount.size)
-    return cum_prob, x_values
+def format_bin_edges(bin_edges, x_axis_display):
+    """
+    Format n + 1 array of bin edges for a histogram or cumumlative probability plot.
+
+    INPUTS:
+        'bin edges': n + 1 list of bins, n x 1 array
+
+        Format the bin edges as:
+        x_axis_display (str):
+            'bin_centre': take the center of each bin (e.g bin 1 = 0 - 2, bin center = 1)
+            'left_edge': take the left edge of the bins (i.e. the mimum value, bin 1 = 0 - 2, left edge = 0)
+            'right_edge': take the right edge of the bins (i.e. the maximum value, bin 1 = 0 - 2, right edge = 2)
+
+    """
+    if x_axis_display == "bin_centre":
+        x_values = get_bin_centers(bin_edges)
+    elif x_axis_display == "left_edge":
+        x_values = bin_edges[0:-1]
+    elif x_axis_display == "right_edge":
+        x_values = bin_edges[1:]
+
+    return x_values
+
+def get_bin_centers(bin_edges):
+    return bin_edges[0:-1] + (np.diff(bin_edges) / 2)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Calculate Data Params
@@ -841,6 +1071,22 @@ def calc_fs(time_):
     fs = (num_samples - 1) / time_period
     return fs
 
+def nearest_point_euclidean_distance(x1, timepoints, y1, datapoints):
+    """
+    Return the euclidean distance between a (x1, y1) datapoint and the nearest true sample
+    with all data standardized to the variance.
+
+    INPUTS:
+
+    x1, y1: coordinates of a datapoint
+    timepoints (x1...xn), datapoints (y1...yn): coordinates of datapoints to find the closest
+    """
+    time_std = np.std(timepoints)
+    data_std = np.std(datapoints)
+    distance = np.sqrt(((y1 - datapoints) / data_std)**2 + ((x1 - timepoints) / time_std)**2)
+
+    return distance
+
 def quick_get_time_in_samples(ts, timepoint):
     return np.round(timepoint / ts).astype(int)
 
@@ -865,9 +1111,10 @@ def generate_time_array(start, stop, num_samples, known_ts, start_stop_time_in_m
 def sort_dict_based_on_keys(dict_to_sort):
     """
     Sort a dict by the key, assuming the key is a str time
-    at which a spike / event occured
+    at which a spike / event occured.
     """
     sorted_dict = dict(sorted(dict_to_sort.items(), key=lambda item: float(item[0])))
+
     return sorted_dict
 
 def get_conversion_to_pa_table():
@@ -895,3 +1142,16 @@ def get_conversion_to_mv_table():
     }
     return conversion_to_mv_table
 
+def total_num_events(event_info, return_per_rec=False):  # TODO: this method is called a lot - would be better to call once and save results.
+    """
+    calculate the total number of events in the event info (rec of dicts) either summed or per-rec
+    """
+    num_recs = len(event_info)
+    per_rec = np.zeros(num_recs)
+    for rec in range(num_recs):
+        if np.any(event_info[rec]):
+            per_rec[rec] = len(event_info[rec])
+
+    events_to_return = np.sum(per_rec) if not return_per_rec else per_rec
+
+    return events_to_return

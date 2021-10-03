@@ -18,164 +18,218 @@ import numpy as np
 from utils import utils
 from ephys_data_methods import core_analysis_methods, event_analysis_master
 import copy
+from types import SimpleNamespace
+import bottleneck as bn
+import scipy.fftpack as fftpack
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Event Detection - Fit Biexp Function b0, b1 to data with Sliding Window
+# Event Detection - Sliding Window
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-def sliding_window(data,
-                   width_s,
-                   rise,
-                   decay,
-                   ts,
-                   downsample,
-                   min_chunk_factor,
-                   progress_bar_callback):
+def clements_bekkers_sliding_window(data, template, u):
     """
-    Vectorised sliding window that passes data (typically sEPSC trace) and:
+    Sliding window template matching with implimentation details from Clements and Bekkers (1997). This is
+    a highly optimised method to perform sliding window template matching. See the original paper for derivation.
 
-    1) fits the free b0 and b1 parameter on the biexpotential function (rise and decay know) to each window
-    2) correltates this best fit with the data.
+    Pad the end of the data so the last n samples are not ignored. The correlation method is also calculated using this algorithm
+    for speed. This neccessitates that the correlation coefficient does not account for negative correlations between template and data. However,
+    as the template is first scaled to match the data, negative correlates will not be possible. Testing shows this implimentation exactly matches
+    a version in which the r can be negative or positive.
 
-    INPUTS: width_s, rise, decay - template coefficients in s
-            ts - sampling step, scalar
-            downsample - dict with downsample settings:
-                            "on" - bool, downsample or not
-                            "chunk_factor" - chunk to divide the data into
-                            "downsample_factor" - factor to downsamlpe the sliding window by.
-            min_chunk_factor - chunk factor is downsampling not applied
+    data: 1 x t array of data
+    template: 1 x n array of the template biexponential function
+    u: the callback function for the progress bar.
 
-    As some data may be very large e.g. 30 million samples, x event width in samples (200-700) it is necessary to
-    chunk the data with a pre-determined chunk factor. To increase speed, the sliding window can be downsampled so that
-    the coefficients are calculated every N samples and interpolated later.
+    Clements, J. D., & Bekkers, J. M. (1997). Detection of spontaneous synaptic
+    events with an optimally selected template. Biophysical Journal, 73(1), 220-229.
 
-    Tests show that:
-        1) numpy float64 data type is fatest under these conditions
-       2) The chunk_factor size has no effect on time (unless is is very large), a chunk_factor size of around 20 is optimal.
-
-    Downsample tests:
-        None - 13.72 s,
-        downsample factor 80 - 1.45 s (doesnt work)
-                          40 - 1.83 s
-                          20 - 1.446
-                          12 - 2.3
-                          10 - 1.973
-                          2  - 5.73
     """
-    all_y = data[0]
-    W = int(width_s/ts)
+    n = template.size
 
-    # Split the data indicies up based on
-    # the chunk_factor
-    samples_to_run = len(all_y)
-    all_idx = np.arange(0, samples_to_run)
+    data = np.hstack([data, np.tile(data[-1], n-1)]); u()
 
-    # Set the chunk_factor to split data, check users memory
-    # and increase chunk_factor if necessary
-    if downsample["on"]:
-        chunk_factor = downsample["chunk_factor"]
-        downsample_factor = downsample["downsample_factor"]
-    else:
-        chunk_factor = min_chunk_factor
+    params = SimpleNamespace(n=n,
+                             sum_template_data=np.correlate(data, template, mode='valid'),
+                             sum_data=bn.move_sum(data, n)[n-1:],
+                             sum_data2=bn.move_sum(data**2, n)[n-1:],
+                             sum_template=np.sum(template),
+                             sum_template2=np.sum(template**2))
+    u()
 
-    idx_split = np.array_split(all_idx, chunk_factor)
+    scale = fit_scale(params)
+    offset = fit_offset(scale, params)
+    std_error, sse = calc_std_error(offset, scale, params)
+    detection_criterion = scale / std_error
+    betas = np.vstack([offset, scale])
+    sst = calc_sst(params)
+    r, __ = calculate_r_and_r_squared(sse, sst)
 
-    # Initialise variables to save correlation and
-    # beta values in and start looping through
-    # data chunks
-    all_betas = utils.np_empty_nan((2, samples_to_run))
-    all_corr = utils.np_empty_nan(samples_to_run)
+    u()
 
-    num_chunks = len(idx_split)
-    progress_bar_callback(0, init_maximum=num_chunks)
-    for i in range(num_chunks):
+    return detection_criterion, betas, r
 
-        progress_bar_callback(i)
-
-        idx = idx_split[i]
-        y = all_y[idx]
-        samples_in_chunk = len(idx)
-
-        # Index the sliding Window. A Window X Sample
-        # Matrix is added to a row of cumulativeiny increasing samples
-        # to create a cumlatively increasing with each row e.g.
-        # [0 1 2 3; 0 1 2 3] + [0; 1] = [0 1 2 3; 1 2 3 4]
-        idx_raw = np.tile(np.arange(0, W), (samples_in_chunk, 1)).T
-        window_idx = (idx_raw + idx.reshape(1, len(idx))).astype(int)
-
-        if downsample["on"]:
-            # Downsample the window indicies to keep window size but reduce spaccing between
-            # windows. See adjust_chunk_size_for_downsampling() for the importance of chunk size here.
-            #
-            # It is also important to re-index based on the new downsamlped indicies. Later the holding variables
-            # all_betas, all_corr are filled using these indicies, then excess nan values cut.
-            window_idx = core_analysis_methods.downsample_data(window_idx, downsample_factor, filter_opts=None)
-            new_num_samples = window_idx.shape[1]
-
-            if i == 0:
-                current_non_nan_entries = 0
-                new_chunk_start_idx = 0
-            else:
-                current_non_nan_entries = current_non_nan_entries + new_num_samples
-                new_chunk_start_idx = current_non_nan_entries
-
-            idx = np.arange(new_chunk_start_idx, new_chunk_start_idx + new_num_samples)
-
-        # Before indexing, the size of the window needs to be taken into account.
-        # The number of window indicies will be + W indicies larger than y because
-        # the window is indexed from the first sample (so at the last sample the window will extend
-        # into nothing. Here, if the loop is not the last, add W number of samples from the next chunk.
-        # Otherwise, use the last sample of the array. These final W values will be cut at the end once
-        # all_corr / all_betas are filled.
-        if i == len(idx_split) - 1:
-            pad = np.tile(y[-1], W)
-        else:
-            pad = all_y[window_idx[:, -1] + 1]
-
-        pad_y = np.concatenate((y, pad))
-        y = pad_y[window_idx - np.min(window_idx)]  # normalise idx for all chunks
-
-        # Create a template of the biexpotential function
-        # with the known rise / decay parameters
-        x = core_analysis_methods.generate_time_array(0, width_s, W, ts)
-        template = np.array([(1 - np.exp(-(x - x[0]) / rise)) * np.exp(-(x - x[0]) / decay)]).T
-
-        # Fit the free b0 and b1 parameters of this biexpotential function
-        # to every window on the dataset. Assign the outputs to the chunks idx.
-        X = np.hstack([np.ones((W, 1)),
-                       template])
-
-        all_betas[:, idx] = np.linalg.inv(X.T @ X) @ X.T @ y
-        yhat = all_betas[0, idx] + all_betas[1, idx] * template
-
-        # Pearson correlate every fit biexpotential curve to the
-        # data at every window. Assign the outputs to the chunks idx.
-        all_corr[idx] = vectorised_pearsons(y, yhat)
-
-    if downsample["on"]:  # remove all nans from over-initialised array, instead cut window off after interp in calling function
-        all_corr = all_corr[~np.isnan(all_corr)]
-        all_betas = all_betas[:, ~np.isnan(all_betas)[0]]
-        return all_corr, all_betas
-
-    return all_corr, all_betas
-
-
-def vectorised_pearsons(y, yhat):
+def fit_scale(p):
     """
-    Perform row-wise pearsons correlation between two N x M matrices.
-    This is useful for correlating multiple timeseries with eachother at once
-    (e.g. during sliding window). Use machine epsiolon to avoid division by zero.
+    An efficient algorithm for fitting the scale parameter (i.e. b1) of a template to data.
 
-    See sliding_window() for details on maximising speed when vectorising
+    Intuitively it can be interpreted as the scaled covariance (minus some offset) normalised to the
+    scaled variance (minus some offset). When covariance is maximal and data is higher than template,
+    the scale will represent the y-axis scaling necessary to match the amplitude of the template to the data.
+    However, if the data is higher than template but the covariance is zero, the scale will be zero i.e.
+    it is not possible to scale the template to the data. As such this parameter represents the y-axis
+    scaling of the template to the data while taking into account the covariance of template and data
     """
-    y_bar = np.mean(y, axis=0)
-    yhat_bar = np.mean(yhat, axis=0)
-    numerator = np.sum((y - y_bar) * (yhat - yhat_bar), axis=0) / len(y)
-    demoninator = (np.std(y, axis=0) * np.std(yhat, axis=0))
-    demoninator[demoninator == 0] = np.finfo(float).eps
-    r = numerator / demoninator
+    return (p.sum_template_data - p.sum_template * p.sum_data / p.n) / (p.sum_template2 - p.sum_template * p.sum_template / p.n)
 
-    return r
+def fit_offset(scale, p):
+    """
+    Fit the offset based on data, template and template scaling.
+    """
+    return (p.sum_data - scale * p.sum_template) / p.n
+
+def calc_std_error(offset, scale, p):
+    """
+    Calculate the standard error between template and data
+    with offset, scale and orignal template factored out.
+    """
+    sse = p.sum_data2 + scale**2 * p.sum_template2 \
+          + p.n * offset**2 \
+          - 2 * (scale * p.sum_template_data
+                 + offset * p.sum_data - scale * offset * p.sum_template)
+
+    std_error = (sse / (p.n - 1)) ** (1/2)
+    return std_error, sse
+
+def calc_sst(p):
+    return p.sum_data2 - p.sum_data**2 / p.n
+
+def calculate_r_and_r_squared(sse, sst):
+    """
+    Fast calculation of r from sse, sst array. Note ignores sign.
+    """
+    r_squared = 1 - sse / sst
+    r = np.sqrt(r_squared)
+    r[np.isnan(r)] = 0
+
+    return r, r_squared
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Event Detection - Deconvolution
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz):
+    """
+    Return filtered deconvolution of template and data.
+
+    Data and template are transformed to the Fourier domain (where deconvolution is pointwise division)
+    and filter with a Gaussian window before inverse FFT.
+
+    INPUTS:
+        data: 1 x N signal
+        data: 1 x T template signal
+        fs: sampling frequency of the original signal
+        low_hz, high_hz: frequency cutoffs in Hz
+
+    Pernia-Andrade, A., Goswami, S. P., Stickler, Y., Frobe, U. Schlogl, A., & Jonas, P. (2012).
+    A Deconvolution-Based Method with High Sensitivity and Temporal Resolution for Detection of
+    Spontaneous Synaptic Currents In Vitro and In Vivo. Biophysical Journal. 103(7), 1429-1439.
+    """
+    num_samples = data.shape[0]
+    pad_template = np.zeros(num_samples)
+    pad_template[0:template.shape[0]] = template
+
+    fft_template = fftpack.fft(pad_template)
+    fft_data = fftpack.fft(data)
+    fft_deconv = fft_data / fft_template
+    filt_fft_deconv = fft_filter_gaussian_window(fft_deconv, low_hz, high_hz, num_samples, fs)
+    filt_deconv = np.real(fftpack.ifft(filt_fft_deconv))
+
+    return filt_deconv
+
+def fft_filter_gaussian_window(data, low_hz, high_hz, num_samples, fs):
+    """
+    Apply a low-pass filter Gaussian window in Fourier domain with a
+    straight high-pass cutoff.
+
+    INPUTS:
+        data: Fourier-tranfsormed signal 1 ... N
+        see get_filtered_template_data_deconvolution() for other inputs
+    """
+    freqs = fftpack.fftfreq(num_samples, 1 / fs)
+    gauss_window = 1 / np.sqrt(2 * np.pi * high_hz / fs) * np.exp(-0.5 * (freqs / high_hz)**2)
+    gauss_window[np.where(np.abs(freqs) < low_hz)] = 0
+    data = gauss_window * data * fs
+    return data
+
+def calculate_deconv_detection_threshold(detection_coefs, n_times_sigma):
+    """
+    Calculate sigma, the detection threshold for deconvolution event detection.
+    Sigma is the standard deviation from the all-points histogram of the deconvoulution. For
+    multi-record files the deconvolution is collapsed across all records.
+
+    The histogram is 10x upsampled by linear interpolation before Gaussian fitting.
+
+    INPUTS:
+        detection_coefs: the Record x N deconvolution of data with event template
+        n_times_sigma: the user-specified sigma cutoff
+    """
+    bin_edges, frequencies = calculate_histogram_bins_and_freq(detection_coefs)
+    detection_threshold, mu, sigma, gaussian_fit = calculate_theta_from_histogram(bin_edges,
+                                                                                  frequencies,
+                                                                                  n_times_sigma)
+
+    detection_threshold_info = SimpleNamespace(gaussian_fit=gaussian_fit,
+                                               bin_edges=bin_edges, frequencies=frequencies,
+                                               mu=mu, sigma=sigma, detection_threshold=detection_threshold)
+
+    return detection_threshold_info
+
+def calculate_theta_from_histogram(bin_edges, frequencies, n_times_std):
+    """
+    Fit a Gaussian function to the all-points histogram from deconvolution.
+    see calculate_histogram_bins_and_freq() for INPUTS
+
+    """
+    coefs, gaussian_fit, __ = core_analysis_methods.fit_curve("gaussian",
+                                                              bin_edges,
+                                                              frequencies,
+                                                              normalise_time=False,
+                                                              direction=1)
+    __, mu, sigma = coefs
+    theta = (n_times_std * sigma)
+
+    return theta, mu, sigma, gaussian_fit
+
+def calculate_histogram_bins_and_freq(detection_coefs):
+    """
+    Calculate the all-points histogram for deconvolution event detection.
+
+    Histogram is 10x linear interpolated.
+
+    INPUT: detection_coefs: Record x N data - template deconvolution, some records (not analysed) may be filled with Nan
+                                              and are removed in the first line while the record structure is collapsed.
+
+    OUTPUT:
+         interp_bin_edges: upsampled left-bin edges of the all-points histogram
+         interp_hist_y: upsampled frequencies of the all-points histogram
+
+    """
+    all_detection_coefs = detection_coefs[~np.isnan(detection_coefs)]
+    detection_coefs_min, detection_coefs_max = [np.min(all_detection_coefs),
+                                                np.max(all_detection_coefs)]
+    num_bins = int(np.sqrt(len(all_detection_coefs)))
+
+    hist_ = np.histogram(all_detection_coefs,
+                         bins=num_bins,
+                         range=(detection_coefs_min,
+                                detection_coefs_max))
+
+    hist_y = hist_[0]
+    bin_edges = hist_[1][1:]
+    interp_hist_y = core_analysis_methods.interpolate_data(hist_y, bin_edges, "linear", 10, 0)
+    interp_bin_edges = core_analysis_methods.interpolate_data(bin_edges, bin_edges, "linear", 10, 0)
+
+    return interp_bin_edges, interp_hist_y
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Event Detection - Thresholding / Smoothing Event Peak / Amplitude
@@ -183,9 +237,7 @@ def vectorised_pearsons(y, yhat):
 
 def check_peak_against_threshold_lower(peak_im,
                                        peak_idx,
-                                       direction,
-                                       threshold_type,
-                                       threshold_lower):
+                                       run_settings):
     """
     Check whether the peak of an event is within predetermined threshold. This could be
     a single value (based on linear), an array of values indexed by the peak index (e.g. curve or drawn curve).
@@ -207,18 +259,22 @@ def check_peak_against_threshold_lower(peak_im,
     OUTPUT:
         within_threshold: bool indicating whether the peak is within the threshold (True) or not
     """
+    direction, threshold_type, threshold_lower, rec = (run_settings["direction"],
+                                                       run_settings["threshold_type"],
+                                                       run_settings["threshold_lower"],
+                                                       run_settings["rec"])
     if threshold_type == "rms":
-        threshold_lower, n_times_rms = [threshold_lower["baseline"],
-                                        threshold_lower["n_times_rms"]
-                                        ]
-        idx = 0 if len(threshold_lower) == 1 else peak_idx
-        indexed_threshold_lower = threshold_lower[idx] + n_times_rms if direction == 1 else threshold_lower[idx] - n_times_rms
+        baseline, n_times_rms = [threshold_lower["baseline"],
+                                 threshold_lower["n_times_rms"]
+                                 ]
+        idx = 0 if len(baseline[rec]) == 1 else peak_idx
+        indexed_threshold_lower = baseline[rec][idx] + n_times_rms[rec] if direction == 1 else baseline[rec][idx] - n_times_rms[rec]  # TODO: could use np.subtract / sum? neater
 
     elif threshold_type == "manual":
-        indexed_threshold_lower = threshold_lower[0]
+        indexed_threshold_lower = threshold_lower[0]  # these are the same for every record (single linear cutoff) but organise per-rec for consistency
 
     elif threshold_type in ["curved", "drawn"]:
-        indexed_threshold_lower = threshold_lower[peak_idx]
+        indexed_threshold_lower = threshold_lower[rec][peak_idx]
 
     compare_func = np.greater if direction == 1 else np.less
     within_threshold = compare_func(peak_im,
@@ -368,6 +424,46 @@ def calculate_event_baseline(time_array,
 
     return bl_idx, bl_time, bl_im
 
+def enhanced_baseline_calculation(data, time_, bl_idx, bl_im, event_info, run_settings):
+    """
+    Enhanced baseline detection based on moving the baseline close to the event foot.
+    A straight line is drawn between the 20-80 rise time points and the interesection with the detected baseline is taken as the event foot.
+    This will only change the position of the baseline, not its Im value which is previously calculated.
+
+    Jonas P, Major G, Sakman B. (1993) Quantal components of unitary EPSCs at the mossy fibre
+    synapse on CA3 pyramidal cells of rat hippocampus. The Journal of Physiology; 472: 615-663.
+    """
+    rise_min_time, rise_min_im, rise_max_time, rise_max_im, rise_time = calculate_event_rise_time(time_,
+                                                                                                  data,
+                                                                                                  bl_idx,
+                                                                                                  event_info["peak"]["idx"],
+                                                                                                  bl_im,
+                                                                                                  event_info["peak"]["im"],
+                                                                                                  run_settings["direction"],
+                                                                                                  min_cutoff_perc=consts("foot_detection_low_rise_percent"),
+                                                                                                  max_cutoff_perc=consts("foot_detection_high_rise_percent"),
+                                                                                                  interp=False)
+    slope = (rise_max_im - rise_min_im) / (rise_max_time - rise_min_time)
+    delta_t = abs(rise_max_im - bl_im) / abs(slope)
+    foot_time = rise_max_time - delta_t
+
+    timepoints = time_[bl_idx: event_info["peak"]["idx"] + 1]
+    datapoints = data[bl_idx: event_info["peak"]["idx"] + 1]
+
+    if len(timepoints) < 2:
+        return False
+
+    # Take the min euclidean distance of the slope / baseline intersection to the data as the new baseline
+    euc_distance = core_analysis_methods.nearest_point_euclidean_distance(foot_time, timepoints,
+                                                                          bl_im, datapoints)
+
+    new_bl_idx = np.argmin(euc_distance)
+
+    bl_idx += new_bl_idx
+    bl_time = time_[bl_idx]
+
+    return {"idx": bl_idx, "time": bl_time, "im": bl_im}
+
 def calculate_event_baseline_from_thr(time_array,
                                       data_array,
                                       thr_im,
@@ -392,12 +488,12 @@ def calculate_event_baseline_from_thr(time_array,
     elif direction == -1:
         under_threshold = ev_im > thr_im
 
-    try:  # take the closeest if none cross
+    try:  # take the closest if none cross
         first_idx_under_baseline = np.max(np.where(under_threshold))
     except:
         first_idx_under_baseline = np.argmin(np.abs(ev_im - thr_im))
 
-    bl_idx = peak_idx - window + first_idx_under_baseline
+    bl_idx = start_idx + first_idx_under_baseline
     bl_time = time_array[bl_idx]
     bl_im = data_array[bl_idx]
 
@@ -412,59 +508,194 @@ def average_baseline_period(data, bl_idx, samples_to_average):
     bl_data = np.mean(data[start_idx:bl_idx + 1])
     return bl_data
 
+def update_baseline_that_is_before_previous_event_peak(data, time_, peak_idx, run_settings):
+    """
+    If event baseline was before the peak of the last baseline, it must have been selected in error and means the
+    previous event is very close in time and almost certainly a doublet. As such, use the max/min of the data values inbetween the two close peaks
+    as the second event's baseline.
+    """
+    bl_func = np.argmin if run_settings["direction"] == 1 else np.argmax
+    bl_idx = bl_func(data[run_settings["previous_event_idx"]:peak_idx+1])
+    bl_idx += run_settings["previous_event_idx"]
+    bl_time = time_[bl_idx]
+    bl_im = data[bl_idx]
+
+    return bl_idx, bl_time, bl_im
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Decay
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-def calculate_event_decay_point(time_array,
-                                data,
-                                peak_idx,
-                                bl_im,
-                                direction,
-                                window):
+# Decay / Event Endpoint Search Methods --------------------------------------------------------------------------------------------------------------
+
+def calculate_event_decay_point_entire_search_region(time_array,
+                                                     data,
+                                                     peak_idx,
+                                                     window,
+                                                     run_settings,
+                                                     bl_im):
     """
+    Decay index is taken as either the full length of the decay_search_period option or
+    up until the next detected baseline.
+
+    The run_settings["next_event_baseline_idx"] < peak_idx conditional should only occur when legacy
+    baseline detection options are selected.
+    """
+    if run_settings["next_event_baseline_idx"] is None:
+        decay_idx = peak_idx + window if peak_idx + window < len(data) else len(data) - 1
+
+    elif run_settings["next_event_baseline_idx"] < peak_idx:
+        decay_idx, decay_time, decay_im = calculate_event_decay_point_crossover_methods(time_array,
+                                                                                        data,
+                                                                                        peak_idx,
+                                                                                        bl_im,
+                                                                                        run_settings["direction"],
+                                                                                        window,
+                                                                                        use_legacy=True)
+        return decay_idx, decay_time, decay_im
+
+    elif peak_idx + window > run_settings["next_event_baseline_idx"]:
+        decay_idx = run_settings["next_event_baseline_idx"] - 1
+
+    else:
+        decay_idx = peak_idx + window
+
+    decay_time = time_array[decay_idx]
+    decay_im = data[decay_idx]
+
+    return decay_idx, decay_time, decay_im
+
+def decay_point_first_crossover_method(time_array,
+                                       data,
+                                       peak_idx,
+                                       window,
+                                       run_settings,
+                                       bl_im):
+    """
+    Coordinate the event endpoint calculation while adjusting for other events.
+
+    First calculate the decay endpoint using the smoothed first crossover method. Then
+    check if it is beyond the net baseline idx - if so set to 1 sample before the next baseline idx.
+    """
+    decay_idx, __, __ = calculate_event_decay_point_crossover_methods(time_array,
+                                                                      data,
+                                                                      peak_idx,
+                                                                      bl_im,
+                                                                      run_settings["direction"],
+                                                                      window,
+                                                                      use_legacy=False)
+
+    if run_settings["next_event_baseline_idx"] is not None and \
+            decay_idx >= run_settings["next_event_baseline_idx"]:
+        decay_idx = run_settings["next_event_baseline_idx"] - 1
+
+    decay_time = time_array[decay_idx]
+    decay_im = data[decay_idx]
+
+    return decay_idx, decay_time, decay_im
+
+def calculate_event_decay_point_crossover_methods(time_array,
+                                                  data,
+                                                  peak_idx,
+                                                  bl_im,
+                                                  direction,
+                                                  window,
+                                                  use_legacy):
+    """
+    Coordinate two different methods of decay endpoint calculation
+
     Find the event endpoint to take the decay monoexp fit to, while accounting for doublet events
     This is typically the max / min value in the window length(depending on the direction).
-
-    INPUTS: bl_im - data value (typically Im for events) of the baseline
-
-    see find_event_peak_after_smoothing() for other inputs
-
-    The decay is slightly smoothed (3 samples) and the first decay point that crosses baseline Im is used.
-    The smoothing is to get rid of large 1-sample spikes that may cross the baseline but be halfway down the decay.
-
-    Just in case a doublet is included in the window length (and if wanting to increase window length somewhat) the
-    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exagerated.
-    Then the miniumm point before the maximum is taken.
     """
     decay_period_data = data[peak_idx:peak_idx + window + 1]
-    time_idx = np.arange(1, len(decay_period_data) + 1)
+
+    if len(decay_period_data) < 2:
+        return False, False
+
     offset = 100000 if direction == 1 else -100000  # ensures data wholly positive or negative (cannot use abs * direction)
-
     decay_period_data = decay_period_data + offset
-    weight_distance_from_peak = consts("weight_distance_from_peak")
-    wpeak = decay_period_data / ((1 / time_idx**weight_distance_from_peak) + np.finfo(float).eps)
+    bl_im += offset
 
+    if use_legacy:
+        decay_idx = decay_endpoint_legacy_method(decay_period_data, peak_idx, direction)
+    else:
+        decay_idx = decay_endpoint_improved_method(decay_period_data, peak_idx, bl_im, direction)
+
+    decay_time = time_array[decay_idx]
+    decay_im = data[decay_idx]
+
+    return decay_idx, decay_time, decay_im
+
+def decay_endpoint_improved_method(decay_period_data, peak_idx, bl_im, direction):
+    """
+    Improved decay endpoint in which data is smoothed to avoid noise peaks, and the first sample to
+    cross the baseline is taken as the end point. Quite destrictive - usually underestimates slightly the end of the event.
+
+    If no sample crosses the baseline, take the nearest sample to the baseline.
+    """
     smoothed_data = quick_moving_average(decay_period_data,
                                          consts("decay_period_to_smooth"))
 
     if direction == 1:
-        second_peak_idx = np.argmax(wpeak)
+        first_decay_idx = find_first_baseline_crossing(smoothed_data, bl_im, direction)
+        if first_decay_idx is False:
+            first_decay_idx = np.argmin(decay_period_data)
 
-        first_decay_idx = np.argmin(np.abs(smoothed_data[0:second_peak_idx] < bl_im))
-        if not np.any(first_decay_idx):
-            first_decay_idx = np.argmin(decay_period_data[0:second_peak_idx])
+    elif direction == -1:
+        first_decay_idx = find_first_baseline_crossing(smoothed_data, bl_im, direction)
+        if first_decay_idx is False:
+            first_decay_idx = np.argmax(decay_period_data)
+
+    decay_idx = peak_idx + first_decay_idx
+
+    return decay_idx
+
+def find_first_baseline_crossing(data, bl_im, direction):
+    """
+    Find the idx of the first sample that crosses the baseline idx. Account for event direction (e.g. if
+    event is negative we are looking for the first datapoint that crosses above the baseline idx).
+
+    return False if no sample crosses the baseline.
+    """
+    try:
+        if direction == 1:
+            first_decay_idx = np.min(np.where(data < bl_im))
+
+        elif direction == -1:
+            first_decay_idx = np.min(np.where(data > bl_im))
+
+        return first_decay_idx
+
+    except ValueError:
+        return False
+
+def decay_endpoint_legacy_method(decay_period_data, peak_idx, direction):
+    """
+    Old method of finding end of event, simply taking the min / max value of the search region.
+
+    Just in case a doublet is included in the window length (and if wanting to increase window length somewhat) the
+    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exagerated.
+    Then the miniumm point before the maximum is taken.
+
+    This method is depreciated and only kept for past users who may need it and is earmarked for full depreciation in future.
+    It is superceeded by methods that take into account the next event, and so do not need to find the next peak.
+    """
+    time_idx = np.arange(1, len(decay_period_data) + 1)
+    weight_distance_from_peak = consts("weight_distance_from_peak")
+    wpeak = decay_period_data / ((1 / time_idx**weight_distance_from_peak) + np.finfo(float).eps)
+
+    if direction == 1:
+        second_peak_idx = np.argmax(wpeak)
+        first_decay_idx = np.argmin(decay_period_data[0:second_peak_idx])
 
     elif direction == -1:
         second_peak_idx = np.argmin(wpeak)
-        first_decay_idx = np.argmin(np.abs(smoothed_data[0:second_peak_idx] > bl_im))
-        if not np.any(first_decay_idx):
-            first_decay_idx = np.argmax(decay_period_data[0:second_peak_idx])
+        first_decay_idx = np.argmax(decay_period_data[0:second_peak_idx])
 
     decay_idx = peak_idx + first_decay_idx
-    decay_time = time_array[decay_idx]
+    return decay_idx
 
-    return decay_idx, decay_time
+# Decay Percent Calculation --------------------------------------------------------------------------------------------------------------------------
 
 def calclate_decay_percentage_peak_from_smoothed_decay(time_array,
                                                        data,
@@ -521,7 +752,7 @@ def calclate_decay_percentage_peak_from_smoothed_decay(time_array,
     raw_smoothed_decay_im = quick_moving_average(decay_im, smooth_window_samples)
 
     return decay_percent_time, decay_percent_im, decay_time_ms, \
-           raw_smoothed_decay_time, raw_smoothed_decay_im
+        raw_smoothed_decay_time, raw_smoothed_decay_im
 
 def calclate_decay_percentage_peak_from_exp_fit(decay_exp_fit_time,
                                                 decay_exp_fit_im,
@@ -578,45 +809,6 @@ def find_nearest_decay_sample_to_amplitude(decay_time,
 
     return decay_percent_time, decay_percent_im, decay_time_ms
 
-def adjust_peak_to_optimise_tau(time_,
-                                data,
-                                peak_idx,
-                                decay_idx,
-                                run_settings):
-    """
-    Sometimes the tau will be very high. This is usually due to noise on the peak. Sometimes moving a few samples
-    left or right (usually right towards the decay end) can improve the fit. First just towards the direction fo decay.
-
-    Here we loop through sample offset from peak until we get a fit where the tau is in range. If cannot fix, return FAlse.
-
-    See fit_monoexp_function_to_decay().
-    """
-    decay_period_samples = decay_idx - peak_idx
-    forward_samples = np.arange(1, np.floor(decay_period_samples * 0.1))
-    backward_samples = np.arange(-np.floor(decay_period_samples * 0.5), -1)
-    offsets_to_try = np.concatenate([forward_samples, backward_samples]).astype(int)
-
-    for offset in offsets_to_try:
-        new_peak_to_try = peak_idx + offset
-        try_decay_time = time_[new_peak_to_try: decay_idx + 1]
-        try_decay_im = data[new_peak_to_try: decay_idx + 1]
-
-        if len(try_decay_time) < 2:
-            continue
-
-        coefs, try_decay_exp_fit_im = core_analysis_methods.fit_curve("monoexp",
-                                                                      try_decay_time,
-                                                                      try_decay_im,
-                                                                      run_settings["direction"])
-
-        if np.any(coefs):
-            try_exp_fit_tau_ms = coefs[2] * 1000
-            if event_analysis_master.is_tau_in_limits(run_settings,
-                                                      try_exp_fit_tau_ms):
-                return try_decay_time, try_decay_exp_fit_im, try_exp_fit_tau_ms
-
-    return False, False, False
-
 def calculate_event_rise_time(time_array,
                               data,
                               bl_idx,
@@ -650,27 +842,19 @@ def calculate_event_rise_time(time_array,
 
 def quick_moving_average(x, n):
     """
-    Combine np.convolve for speed but then smooth gracefully
-    at the edges by iteratively decreasing the smoothing window.
+    Use np.convolve for speed extending the array prior to smoothing with hte first / last sample and cutting down again. This gives
+    good performance for the edges, better than the previous version (<v2.3.0-beta) in which interative decreasing the window size was used.
+
+    For odd window, the window is perfectly centered. For even windows, there the is off-center one half-step down. This is
+    intrinc to the convolution method of smoothing. e.g. [x1, x2, x3, x4, x5] smoothed with a 4 sample window at idx 2 will average
+    x1, x2, x3, x4.
+
+    Other methods are available for full centering (e.g. Savitzky–Golay filter, direct for-loop implimentation) but testing found they
+    are either much slower or underperform in this situation with small window and sample number.
     """
-    out = np.convolve(x, np.ones(n) / n, mode="same")
-
-    num_samples = len(x)
-    window = np.floor(n / 2).astype(int)
-    for i in range(window):
-        if i == 0:
-            out[i] = np.mean(x[0:n])
-
-        elif i < window:
-            out[i] = np.mean(x[0: i + window])
-
-    for i in range(num_samples - window, num_samples):
-        if i == num_samples:
-            out[i] = np.mean(x[num_samples - n:num_samples])
-
-        elif i > num_samples - window - 1:
-            out[i] = np.mean(x[i - window: num_samples])
-
+    data = np.hstack([np.tile(x[0], n), x, np.tile(x[-1], n)])
+    out = np.convolve(data, np.ones(n) / n, mode="same")
+    out = out[n:-n]
     return out
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -682,18 +866,17 @@ def is_at_least_zero(start_idx):
         start_idx = 0
     return start_idx
 
-def normalise_amplitude(data,
-                        remove_baseline=False):
+def normalise_amplitude(data):
     """
-    Keep the amplitude of the signal to 1. If remove basleine, centre to the first sample.
-    Don"t demean as the first-sample is more interesting for cutting the left edge
-    during generating the template.
+    Normalise the amplitude of an event to 1 for display purposes.
+
+    Don"t demean to remove baseline as the first-sample is more important for cutting the left edge
+    when generating the template.
     """
-    if remove_baseline:
-        data = data - data[0]
+    data = data - data[0]
 
     amplitude = find_amplitude_min_or_max(data,
-                                          use_first_sample_as_baseline=remove_baseline)
+                                          use_first_sample_as_baseline=True)
     norm_curve = data * (1 / np.abs(amplitude))
 
     return norm_curve
@@ -701,10 +884,10 @@ def normalise_amplitude(data,
 
 def find_amplitude_min_or_max(data, use_first_sample_as_baseline):
     """
-    Only works if data normanlised to zero!!
-
     Find the minimum or maximum peak of a trace (normalised to zero) depending on which is larger.
     Useful for single events where it is not known if they are positive or negative.
+
+    NOTE: Only works if data normanlised to zero start point.
     """
     abs_min = np.abs(np.min(data))
     abs_max = np.abs(np.max(data))
@@ -747,5 +930,13 @@ def consts(constant_name):
     elif constant_name == "event_peak_smoothing":
         const = 3
 
-    return const
+    elif constant_name == "foot_detection_low_rise_percent":
+        const = 20
 
+    elif constant_name == "foot_detection_high_rise_percent":
+        const = 80
+
+    elif constant_name == "deconv_peak_search_region_multiplier":
+        const = 3
+
+    return const
