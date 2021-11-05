@@ -64,10 +64,15 @@ def auto_find_spikes(data,
         spike_info = spikes_from_auto_threshold_per_record(data,
                                                            rec_from, rec_to,
                                                            thr,
-                                                           time_bounds, bound_start_or_stop)
+                                                           time_bounds,
+                                                           bound_start_or_stop)
     if thr["threshold_type"] == "auto_spike":
         spike_info = spikes_from_auto_threshold_per_spike(data,
-                                                          rec_from, upper_inclusive_rec_bound, thr)
+                                                          rec_from,
+                                                          upper_inclusive_rec_bound,
+                                                          thr,
+                                                          time_bounds,
+                                                          bound_start_or_stop)
 
     return spike_info
 
@@ -133,7 +138,9 @@ def spikes_from_auto_threshold_per_record(data,
 def spikes_from_auto_threshold_per_spike(data,
                                          rec_from,
                                          upper_inclusive_rec_bound,
-                                         thr):
+                                         thr,
+                                         time_bounds,
+                                         bound_start_or_stop):
     """
     Find APs from auto-thresholding without further robust thresholding based on detected APs.
     see See auto_find_spikes() for inputs

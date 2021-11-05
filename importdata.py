@@ -14,12 +14,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import copy
+
 import neo
 import numpy as np
 from PySide2.QtWidgets import QInputDialog, QMessageBox
 from utils import fonts_and_brushes
 from utils import utils
 from ephys_data_methods import core_analysis_methods
+from dialog_menus.importdata_show_channels import ShowChannelsWarning, ViewChannels
+
+# TODO: this module is getting big with quite a lot of args passed around, but is not not seem right to make it a class
+#       as it is not persistant and only used once to load a file.
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Load Data With Neo
@@ -29,7 +35,7 @@ from ephys_data_methods import core_analysis_methods
 # when there are > 2. The main method "import_data" will return None if import fails.
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-def import_data(full_filepath, file_ext, cfgs):
+def import_data(full_filepath, file_ext, cfgs, mw):
     """
     Import data using Neo and output a structure containing channel information and data.
     Currently only 2 channels are supported, if more are in the file let the user select.
@@ -42,75 +48,56 @@ def import_data(full_filepath, file_ext, cfgs):
 
     OUTPUT:
         DataModel file including data arrays and file / data information.
-    """
 
+    TODO: this module has gotten quite big, looked into making a class but it is a little pointless
+    as it is not persistent, just called once when loading a file. Use of SimpleNameSpace to simplify
+    args sufficient for now.
+
+    """
     # Load with neo and get primary and secondary channel index
-    channels, reader, block_neo_file = load_file_with_neo(full_filepath, file_ext)
+    channels, reader, neo_block = load_file_with_neo(full_filepath, file_ext)
     if channels is None:
         return None
 
-    channel_1, channel_1_idx, channel_2, channel_2_idx = get_channel_data_info(cfgs, channels, reader)
-    if channel_1 is None or channel_is_proxy(channel_1_idx, block_neo_file, channel_1=True):
+    channel_1, channel_1_idx, channel_2, channel_2_idx = get_channel_data_info(cfgs, channels, reader, mw)
+    if channel_1 is None or channel_is_proxy(channel_1_idx, neo_block,
+                                             reader, cfgs, mw, channel_1=True):
         return None
 
     # Get channel type (Im or Vm), units and load data structure
-    channel_1_type, channel_1_units = get_channel_type(channel_1,
+    channel_1_units, channel_1_type = get_channel_type(channel_1,
                                                        cfgs,
-                                                       block_neo_file,
-                                                       channel_1_idx)
+                                                       neo_block,
+                                                       channel_1_idx,
+                                                       reader, mw)
     if not channel_1_type:
         return False
 
     if channel_2 and not channel_is_proxy(channel_2_idx,
-                                          block_neo_file):
-        channel_2_type, channel_2_units = get_channel_type(channel_2,
+                                          neo_block,
+                                          reader, cfgs, mw):
+
+        channel_2_units, channel_2_type = get_channel_type(channel_2,
                                                            cfgs,
-                                                           block_neo_file,
-                                                           channel_2_idx)
+                                                           neo_block,
+                                                           channel_2_idx,
+                                                           reader, mw)
+
         if not channel_2_exists_and_is_different_type_to_channel_1(channel_1_type,
-                                                                   channel_2_type):
+                                                                   channel_2_type,
+                                                                   cfgs, reader, mw):
             return False
 
-        Data = ImportData(block_neo_file, 2, cfgs,
+        Data = ImportData(neo_block, 2, cfgs,
                           channel_1_type, channel_1_units, channel_1_idx,
                           channel_2_type, channel_2_units, channel_2_idx,
                           reader, file_ext)
     else:
-        Data = ImportData(block_neo_file, 1, cfgs,
+        Data = ImportData(neo_block, 1, cfgs,
                           channel_1_type, channel_1_units, channel_1_idx,
                           None, None, None,
                           reader, file_ext)
     return Data
-
-
-def channel_is_proxy(channel_idx, block_neo_file, channel_1=False):
-    """
-    For some filetypes (possibly just .abf generated by IGOR) self._raw_signals is shorter ('igor_abf_too_many_channels.abf in test_data')
-    than the nubmer of channels neo can find. In this instance neo will fill with a proxy analogsignals
-    but this will crash data loading class. Here check if any are proxy (abence of data i.e. 'manitude attribute)
-    and inform the user that this channel does not exist.
-
-    Show error message if channel 1 index is tested (if another channel fails, jsut channel 1 willl be loaded)
-    TODO: confirm filetypes this works on, contact neo
-    """
-    channel_is_proxy = not hasattr(block_neo_file.segments[0].analogsignals[channel_idx], 'magnitude')
-
-    if channel_1 and channel_is_proxy:
-        utils.show_messagebox("Load File Error",
-                              "Please ensure the data channel exists in the file. "
-                              "Please contact support@easyelectrophysiology.com if this channel definitely exists.")
-    return channel_is_proxy
-
-def channel_2_exists_and_is_different_type_to_channel_1(channel_1_type, channel_2_type):
-    if not channel_2_type:
-        return False
-
-    if channel_1_type == channel_2_type:
-        utils.show_messagebox("Load File Error",
-                              "Cannot have two channels of the same data type (e.g. voltage, voltage). "
-                              "Please load only one of the channels (File > File Loading Options > Select Channels to Load).")
-        return False
-    return True
 
 def load_file_with_neo(full_filepath, file_ext):
     """
@@ -119,7 +106,7 @@ def load_file_with_neo(full_filepath, file_ext):
     OUTPUTS:
         channels: channels header from Neo raw output class
         reader: neo raw output class
-        block_neo_file: block from the neo file
+        neo_block: block from the neo file
     """
     try:
         if file_ext.upper() == ".ABF":
@@ -141,24 +128,55 @@ def load_file_with_neo(full_filepath, file_ext):
                                                 "and that read permission is granted.")
         return None, None, None
 
-    block_neo_file = reader.read_block(signal_group_mode="split-all")  # if grouped, grouped signals go to first index destroying the order specified in reader.headers["signal_channels"]
+    neo_block = reader.read_block(signal_group_mode="split-all")  # if grouped, grouped signals go to first index destroying the order specified in reader.headers["signal_channels"]
     channels = reader.header["signal_channels"]
 
-    return channels, reader, block_neo_file
+    return channels, reader, neo_block
 
 # Processing Channels --------------------------------------------------------------------------------------------------------------------------------
 
-def get_channel_data_info(cfgs, channels, reader):
+def channel_is_proxy(channel_idx, neo_block, reader, cfgs, mw, channel_1=False):
+    """
+    For some filetypes (possibly just .abf generated by IGOR) self._raw_signals is shorter ('igor_abf_too_many_channels.abf in test_data')
+    than the nubmer of channels neo can find. In this instance neo will fill with a proxy analogsignals
+    but this will crash data loading class. Here check if any are proxy (abence of data i.e. 'manitude attribute)
+    and inform the user that this channel does not exist.
+
+    Show error message if channel 1 index is tested (if another channel fails, jsut channel 1 willl be loaded)
+    TODO: confirm filetypes this works on, contact neo
+    """
+    channel_is_proxy = not hasattr(neo_block.segments[0].analogsignals[channel_idx], 'magnitude')
+
+    if channel_1 and channel_is_proxy:
+        show_warning(mw, cfgs, reader,
+                     "Load File Error",
+                     "Please ensure the data channel exists in the file. "
+                     "Please contact support@easyelectrophysiology.com if this channel definitely exists.")
+    return channel_is_proxy
+
+def channel_2_exists_and_is_different_type_to_channel_1(channel_1_type, channel_2_type, cfgs, reader, mw):
+    if not channel_2_type:
+        return False
+
+    if channel_1_type == channel_2_type:
+        show_warning(mw, cfgs, reader,
+                     "Load File Error",
+                     "Cannot have two channels of the same data type (e.g. voltage, voltage). "
+                     "Please load only one of the channels (File > File Loading Options > Select Channels to Load).")
+        return False
+    return True
+
+def get_channel_data_info(cfgs, channels, reader, mw):
     """
     Load channels from the raw neo file.
     Currently EE can handle only two channel types. If more are present, user is given option to select which channels to load.
     """
     if cfgs.file_load_options["select_channels_to_load"]["on"]:
-        return get_users_default_channels(cfgs, reader)
+        return get_users_default_channels(cfgs, reader, mw)
     else:
-        return get_default_channels(channels, reader)
+        return get_default_channels(cfgs, channels, reader)
 
-def get_users_default_channels(cfgs, reader):
+def get_users_default_channels(cfgs, reader, mw):
     """
     Be careful about None vs. 0 here, check explicitly for None
     """
@@ -168,23 +186,23 @@ def get_users_default_channels(cfgs, reader):
     try:
         channel_1 = reader.header["signal_channels"][channel_1_idx]
         channel_2 = None if channel_2_idx is None else reader.header["signal_channels"][channel_2_idx]
-
     except:
-        utils.show_messagebox("Input Error",
-                              "When selecting channels to load in 'File' > 'Load Options', "
-                              "ensure the channels exist in the file.")
+        show_warning(mw, cfgs, reader,
+                     "Input Error",
+                     "When selecting channels to load in 'File' > 'Load Options', "
+                     "ensure the channels exist in the file.")
         return None, None, None, None
 
     return channel_1, channel_1_idx, channel_2, channel_2_idx
 
-def get_default_channels(channels, reader):
+def get_default_channels(cfgs, channels, reader):
     """
     """
     channel_2 = channel_2_idx = None
     num_channels = len(channels)
 
     if num_channels > 2:
-        channel_1_idx, channel_2_idx, channel_1, channel_2 = utils.get_channels_from_user_input(reader)
+        channel_1_idx, channel_2_idx, channel_1, channel_2 = get_channels_from_user_input(cfgs, reader)
 
     elif num_channels in [1, 2]:
         channel_1_idx = 0
@@ -197,7 +215,7 @@ def get_default_channels(channels, reader):
     return channel_1, channel_1_idx, channel_2, channel_2_idx
 
 
-def get_channel_type(channel, cfgs, block_neo_file, channel_idx):
+def get_channel_type(channel, cfgs, neo_block, channel_idx, reader, mw):
     """
     Find the channel type based on it's saved name or units.
 
@@ -212,21 +230,54 @@ def get_channel_type(channel, cfgs, block_neo_file, channel_idx):
     if channel_units == "\x02mV":  # TODO: not the best way to handle edge cases. As soon as a second one arises, refactor
         channel_units = "mV"
 
+    channel_units, channel_type = get_channel_type_from_channel_units(channel_units, cfgs,  neo_block, channel_idx)
+
+    if channel_units == "not_recognised":
+        channel_units, channel_type = get_user_input_channel_units(channel[4].strip(), cfgs, neo_block, channel_idx)
+
+    return channel_units, channel_type
+
+def get_channel_type_from_channel_units(channel_units, cfgs,  neo_block, channel_idx):
+    """
+    """
     if channel_units == "mV":
         channel_type = "Vm"
     elif channel_units == "pA":
         channel_type = "Im"
-    elif channel_units in ["fA", "nA", "uA", "mA", "A", "pV", "nV", "uV", "V"]:
-        channel_units, channel_type = process_non_default_channel_units(channel_units, cfgs,  block_neo_file, channel_idx)
+    elif channel_units in ["fA", "nA", "uA", "mA", "A", "pV", "nV", "uV", "V"]:  # TODO: add to global configs as copied in importdata_show_channels
+        channel_units, channel_type = process_non_default_channel_units(channel_units, cfgs,  neo_block, channel_idx)
         if channel_units is None:
             return None, None
     else:
-        utils.show_messagebox("Type Error",
-                              "Cannot determine recording type. Please contact support@easyelectrophysiology.com")
-        return None, None
-    return channel_type, channel_units
+        return "not_recognised", False
 
-def process_non_default_channel_units(channel_units, cfgs, block_neo_file, channel_idx):
+    return channel_units, channel_type
+
+def get_user_input_channel_units(channel_units, cfgs, neo_block, channel_idx):
+
+    orig_channel_units = channel_units
+    while True:
+        channel_units = utils.get_user_input("Channel Not Found",
+                                             "Channel {0} units ('{1}') were not recognised. Please enter the correct units below.\n"
+                                             "Units must be one of: fA, pA, nA, uA, mA, A, pV, nV, uV, mV, V".format(channel_idx + 1,
+                                                                                                                     orig_channel_units),
+                                             align_center=True)
+
+        channel_units, channel_type = get_channel_type_from_channel_units(channel_units, cfgs,  neo_block, channel_idx)
+
+        if channel_units == "not_recognised":
+            utils.show_messagebox("Units Error",
+                                  "Input units were not recognised. Please try again or press cancel.")
+            continue
+
+        elif channel_units is None:
+            return None, None
+        else:
+            break
+
+    return channel_units, channel_type
+
+def process_non_default_channel_units(channel_units, cfgs, neo_block, channel_idx):
     """
     Handle channels not in pA or mV
 
@@ -251,14 +302,75 @@ def process_non_default_channel_units(channel_units, cfgs, block_neo_file, chann
         channel_units = "mV" if cfgs.file_load_options["default_vm_units"]["assume_mv"] else cfgs.file_load_options["default_vm_units"]["mv_unit_to_convert"]
 
     else:
-        show_bad_header_units_warning(channel_type, channel_units, block_neo_file, channel_idx)
+        show_bad_header_units_warning(channel_type, channel_units, neo_block, channel_idx)
         channel_units = channel_type = None
 
     return channel_units, channel_type
 
+def get_channels_from_user_input(cfgs, reader):
+    """
+    """
+    while True:
+
+        user_input_channels = utils.get_user_input("Channel Warning",
+                                                   "Easy Electrophysiology does not currently support recordings of more than two channels.\n"
+                                                   "Type 'view' to see a full list of channels.\n\n"
+                                                   "Please input the channels you would like to open, separated by a comma.\n"
+                                                   "This can be automated at 'File' > 'File Loading Options' > 'Select Channels to Load'",
+                                                   align_center=True)
+
+        if user_input_channels.lower() in ["view", "'view'"]:
+            ViewChannels(None, cfgs, reader.header["signal_channels"], exec=True)
+            continue
+
+        if user_input_channels == "":  # catch user cancel
+            return None, None, None, None
+
+        user_input_channels = utils.check_comma_seperated_user_input_and_extract_ints(user_input_channels,
+                                                                                      allowed_chars=[","])
+        if user_input_channels is None:
+            continue
+
+        # Check number of channels
+        if len(user_input_channels) == 1:
+            if user_input_channels[0] == ",":
+                utils.show_messagebox("Input error",
+                                      "Please input a number.")
+                continue
+            else:
+                channel_2_input = False
+
+        elif len(user_input_channels) == 2:
+            channel_2_input = True
+
+        if len(user_input_channels) not in [1, 2] or \
+                0 in user_input_channels or \
+                (channel_2_input and user_input_channels[0] == user_input_channels[1]):
+            utils.show_messagebox("Input Error",
+                                  "Please input up to 2 numbers in the range 1 to num channels.")
+            continue
+
+        try:
+            channel_1_idx = int(user_input_channels[0]) - 1
+            channel_1 = reader.header["signal_channels"][channel_1_idx]
+            if channel_2_input:
+                channel_2_idx = int(user_input_channels[1]) - 1  # assume user input is not zero indexed
+                channel_2 = reader.header["signal_channels"][channel_2_idx]
+            else:
+                channel_2_idx = None
+                channel_2 = None
+            break
+
+        except:
+            utils.show_messagebox("Channel Error", "Cannot use input. "
+                                  "Please ensure input is integer within the range "
+                                  "of available data channels.")
+
+    return channel_1_idx, channel_2_idx, channel_1, channel_2
+
 # Handle non-pA or mV channel types ------------------------------------------------------------------------------------------------------------------
 
-def show_bad_header_units_warning(channel_type, channel_units, block_neo_file, channel_idx):
+def show_bad_header_units_warning(channel_type, channel_units, neo_block, channel_idx):
     """
     Prompt the user to set the correct settings for re-scaling data that is not in pA or mV.
 
@@ -270,7 +382,7 @@ def show_bad_header_units_warning(channel_type, channel_units, block_neo_file, c
                      "file loading options in 'File' > 'File Loading Options' > Specify Default Unit Handling'.".format(channel_units,
                                                                                                                         expected_units)
 
-    guessed_units = check_if_header_units_are_correct(block_neo_file, channel_idx, channel_type)
+    guessed_units = check_if_header_units_are_correct(neo_block, channel_idx, channel_type)
     if guessed_units != channel_units:
         extra_warning = "\nWARNING! Header units were read as {0} but are most likely {1}. Try {1} first in File Load Options".format(channel_units,
                                                                                                                                       guessed_units)
@@ -279,12 +391,12 @@ def show_bad_header_units_warning(channel_type, channel_units, block_neo_file, c
     utils.show_messagebox("Channel Units Error",
                           message_string)
 
-def check_if_header_units_are_correct(block_neo_file, channel_idx, im_or_vm):
+def check_if_header_units_are_correct(neo_block, channel_idx, im_or_vm):
     """
     Typically data properly scaled to Im / mV will be in the 0-2000 range. The only instance
     this could cause problems is for very large stimulus registering > 2000, but these are rarely seen pA / mV.
     """
-    channel_data = block_neo_file.segments[0].analogsignals[channel_idx].magnitude
+    channel_data = neo_block.segments[0].analogsignals[channel_idx].magnitude
     channel_range = max(channel_data) - min(channel_data)
 
     if im_or_vm == "Im":
@@ -308,6 +420,12 @@ def check_if_header_units_are_correct(block_neo_file, channel_idx, im_or_vm):
             return unit
     return "undefined: contact Easy Electrophysiology."
 
+def show_warning(mw, cfgs, reader, title, text):
+    """
+    Show failed load warning with button to show all channels
+    """
+    ShowChannelsWarning(mw, cfgs, reader.header["signal_channels"], title, text)
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Data Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -323,17 +441,17 @@ class ImportData:
                   cannot wrap dialog to this class or will throw pickle error on deepcopy at model level.
 
     """
-    def __init__(self, block_neo_file, num_chans, cfgs,
+    def __init__(self, neo_block, num_chans, cfgs,
                  channel_1_type, channel_1_units, channel_1_idx,
                  channel_2_type, channel_2_units, channel_2_idx,
                  reader, file_ext):
 
         self.load_setting = cfgs.file_load_options["force_load_options"]
-        self.num_recs = len(block_neo_file.segments)
-        self.num_samples = len(block_neo_file.segments[0].analogsignals[0])
-        self.fs = block_neo_file.segments[0].analogsignals[0].sampling_rate.magnitude  # strip quantities
-        self.ts = block_neo_file.segments[0].analogsignals[0].sampling_period.magnitude
-        self.time_units = str(block_neo_file.segments[0].t_start).split(" ")[1]
+        self.num_recs = len(neo_block.segments)
+        self.num_samples = len(neo_block.segments[0].analogsignals[0])
+        self.fs = neo_block.segments[0].analogsignals[0].sampling_rate.magnitude  # strip quantities
+        self.ts = neo_block.segments[0].analogsignals[0].sampling_period.magnitude
+        self.time_units = str(neo_block.segments[0].t_start).split(" ")[1]
         self.vm_array = np.zeros((self.num_recs,
                                   self.num_samples))
         self.im_array = np.zeros((self.num_recs,
@@ -350,16 +468,17 @@ class ImportData:
         self.channel_2_type = channel_2_type
         self.recording_type = None
         self.tags = ""
+        self.all_channels = reader.header["signal_channels"]
 
         if self.load_setting is None and channel_1_type == "Vm" or \
                 self.load_setting == "current_clamp":
-            self.vm_array = self.extract_data_from_array(channel_1_idx, block_neo_file)
+            self.vm_array = self.extract_data_from_array(channel_1_idx, neo_block)
             self.vm_units = channel_1_units
             self.recording_type = "current_clamp"
 
         elif self.load_setting is None and channel_1_type == "Im" or \
                 self.load_setting == "voltage_clamp":
-            self.im_array = self.extract_data_from_array(channel_1_idx, block_neo_file)
+            self.im_array = self.extract_data_from_array(channel_1_idx, neo_block)
             self.im_units = channel_1_units
             if self.num_recs == 1:
                 self.recording_type = "voltage_clamp_1_record"
@@ -369,18 +488,18 @@ class ImportData:
         if channel_2_idx is not None:
             if self.load_setting is None and channel_2_type == "Vm" or \
                     self.load_setting == "voltage_clamp":
-                self.vm_array = self.extract_data_from_array(channel_2_idx, block_neo_file)
+                self.vm_array = self.extract_data_from_array(channel_2_idx, neo_block)
                 self.vm_units = channel_2_units
 
             elif self.load_setting is None and channel_2_type == "Im" or \
                     self.load_setting == "current_clamp":
-                self.im_array = self.extract_data_from_array(channel_2_idx, block_neo_file)
+                self.im_array = self.extract_data_from_array(channel_2_idx, neo_block)
                 self.im_units = channel_2_units
 
         else:
             self.handle_generate_axon_protocol(reader, cfgs)
 
-        self.time_array, self.t_start, self.t_stop = self.extract_time_array(block_neo_file)
+        self.time_array, self.t_start, self.t_stop = self.extract_time_array(neo_block)
         self.check_and_clean_data()
         self.update_tags(reader, file_ext)
         return
@@ -416,32 +535,52 @@ class ImportData:
             self.vm_array *= conversion_to_mv_table[self.vm_units]
             self.vm_units = "mV"
 
-    def extract_time_array(self, block_neo_file):
+    def extract_time_array(self, neo_block):
         """
         """
+        channel_time_check = True
         time_array = utils.np_empty_nan((self.num_recs,
                                          self.num_samples))
         for rec in range(self.num_recs):
-            time_ = core_analysis_methods.generate_time_array(block_neo_file.segments[rec].t_start.magnitude,
-                                                              block_neo_file.segments[rec].t_stop.magnitude,
+            time_ = core_analysis_methods.generate_time_array(neo_block.segments[rec].analogsignals[0].t_start.magnitude,
+                                                              neo_block.segments[rec].analogsignals[0].t_stop.magnitude,
                                                               self.num_samples,
                                                               self.ts)
-
             time_array[rec, :] = time_.squeeze()
 
-        t_start = float(block_neo_file.segments[0].t_start)                   # get first and very last time point in case data needs cutting into records (cut_up_data() in data model)
-        t_stop = float(block_neo_file.segments[self.num_recs - 1].t_stop)     # convert to float to remove units formatting, zero idx
+            if not self.channel_times_are_equal(neo_block, rec):
+                channel_time_check = False
+
+        t_start = float(neo_block.segments[0].analogsignals[0].t_start)                   # get first and very last time point in case data needs cutting into records (cut_up_data() in data model)
+        t_stop = float(neo_block.segments[self.num_recs - 1].analogsignals[0].t_stop)     # convert to float to remove units formatting, zero idx
+
+        if not channel_time_check:
+            utils.show_messagebox("Time Error",
+                                  "The timing of channel 1 and channel 2 are not the same. The time units for channel 2 will be incorrect. Please contact support@easyelectrophysiology.com")
 
         return time_array, t_start, t_stop
 
-    def extract_data_from_array(self, data_idx, block_neo_file):
+    def channel_times_are_equal(self, neo_block, rec):
+        """
+        It is assumed all analogsignals have the same start / stop time. These should always be Im / Vm traces recorded at the same time
+        so it would be very unexpected to find a case in which the timings are different.
+        """
+        if len(neo_block.segments[rec].analogsignals) == 2:
+            if (neo_block.segments[rec].analogsignals[0].t_start.magnitude !=
+                    neo_block.segments[rec].analogsignals[1].t_start.magnitude or
+                    neo_block.segments[rec].analogsignals[0].t_stop.magnitude !=
+                    neo_block.segments[rec].analogsignals[1].t_stop.magnitude):
+                return False
+        return True
+
+    def extract_data_from_array(self, data_idx, neo_block):
         """
         extract Im or Vm from neo model (depending on analogsignal idx)
         """
         array = utils.np_empty_nan((self.num_recs,
                                     self.num_samples))
         for rec in range(self.num_recs):
-            data = block_neo_file.segments[rec].analogsignals[data_idx].magnitude
+            data = neo_block.segments[rec].analogsignals[data_idx].magnitude
             array[rec, :] = data.squeeze()
 
         return array

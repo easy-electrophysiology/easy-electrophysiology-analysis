@@ -944,7 +944,7 @@ def calc_cumulative_probability_or_histogram(data, settings, parameter, legacy_b
     """
     cum_prob_or_hist = settings["plot_type"]
 
-    if len(data) < 4:
+    if len(data) < 1:
         return False, False, False, False
 
     # Calculate number of bins based on user settings
