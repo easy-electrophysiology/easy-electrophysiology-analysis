@@ -962,7 +962,7 @@ def calc_cumulative_probability_or_histogram(data, settings, parameter, legacy_b
 
     # Calculate the y values and bin edges for the histogram / cumulative probability
     if cum_prob_or_hist == "cum_prob":
-        y_values, bin_edges, binsize = calc_cumulative_frequency(data, num_bins, limits)
+        y_values, bin_edges, binsize = calc_cumulative_probability(data, num_bins, limits)
 
     elif cum_prob_or_hist == "hist":
         y_values, bin_edges, binsize = calc_histogram(data, num_bins, limits)
@@ -984,26 +984,29 @@ def calc_histogram(data, num_bins, limits):
 
     return y_values, bin_edges, binsize
 
-def calc_cumulative_frequency(data, num_bins, limits):
+def calc_cumulative_probability(data, num_bins, limits):
     """
     Calculate the binned cumulative probability from data processed
     for cum prob analysis.
 
     INPUT:
         data: data processed for cum prob analysis (see above functions)
-        bin_divisor: scalar to divide the max number of bins. Use can set in
-                     Event Analysis - Misc. Options.
+        num_bins: number of bins to divide the data into
+        limits: start / end limits for the bins
 
     OUTPUT:
-        cum_prob: 1 x bin cumulative probability (in the interval 0 1)
-        x_values: cumulative bins
+        cdf: 1 x bin cumulative probabilities
+        bin_edges, binsize - generated bin edges and binsizes
+
+    NOTES: see https://stackoverflow.com/questions/10640759/how-to-get-the-cumulative-distribution-function-with-numpy
+           for an alternative 'continuous' method of calculation. Binning is preferred here as it is more flexible.
     """
     counts, bin_edges, binsize = calc_histogram(data, num_bins, limits)
 
-    cdf = counts / np.sum(counts)
-    pdf = np.cumsum(cdf)
+    pdf = counts / np.sum(counts)
+    cdf = np.cumsum(pdf)
 
-    return pdf, bin_edges, binsize
+    return cdf, bin_edges, binsize
 
 def format_bin_edges(bin_edges, x_axis_display):
     """

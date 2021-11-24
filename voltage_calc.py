@@ -409,6 +409,9 @@ def calculate_event_baseline(time_array,
     slopes = ((peak_im - sample_ims) / (peak_time - sample_times))
     norms = np.sqrt((peak_im - sample_ims)**2 + (peak_time - sample_times)**2)
 
+    if not np.any(norms):  # added for SUPPORT_CODE: 101
+        return False, False, False
+
     perc = np.percentile(norms,
                          consts("bl_percentile"))
     slopes[norms < perc] = np.nan
