@@ -17,7 +17,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import numpy as np
 from utils import utils
 from ephys_data_methods import core_analysis_methods, event_analysis_master
-import copy
 from types import SimpleNamespace
 import bottleneck as bn
 import scipy.fftpack as fftpack

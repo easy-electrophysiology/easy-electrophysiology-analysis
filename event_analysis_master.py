@@ -14,8 +14,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import copy
-
 import numpy as np
 from ephys_data_methods import voltage_calc, core_analysis_methods, current_calc
 from utils import utils

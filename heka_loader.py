@@ -1,17 +1,22 @@
-import copy
-
+from sys import platform
+if platform == "darwin":
+    from gui_macos.open_heka_dialog import Ui_open_heka_dialog
+else:
+    from gui_windows.open_heka_dialog import Ui_open_heka_dialog
 from load_heka import load_heka
 import neo
-from gui_windows.open_heka_dialog import Ui_open_heka_dialog
 from PySide2.QtWidgets import QTreeWidgetItem, QDialog
 from PySide2 import QtCore
 
-# TODO:@ change name to opener
-class OpenHekaDialog(QDialog):
 
+class OpenHekaDialog(QDialog):
+    """
+    TreeWidget that emits signal of group and series index from a list of
+     HEKA group / series when the series is double clicked.
+    """
     tree_clicked = QtCore.Signal(int, int)
 
-    def __init__(self, mw, dict_of_groups_series):  # TODO: SET MODAL
+    def __init__(self, mw, dict_of_groups_series):
         super(OpenHekaDialog, self).__init__(parent=mw)
 
         self.mw = mw
@@ -46,9 +51,14 @@ class OpenHekaDialog(QDialog):
         self.tree_clicked.emit(group_idx, series_idx)
 
 
-class OpenHeka:  # TODO: doc somehwer that it will swap channel order
+class OpenHeka:
     """
-    Wrapper around
+    Wrapper around custom Neo IO that wraps LoadHeka module. The custom NeoIO will force the channel order to be
+    according to the recording type (voltage clamp  or current clamp, e.g. if voltage clamp, Im first and Vm second).
+
+    If two input channels are available, both will be loaded and the stimulation protocol will be ignored. Otherwise
+    if only one channel is available as well as the a stimulus protocol, the stimulus protocol will be reconstructed
+    and set as he second channel (name 'stimulation').
     """
     def __init__(self, mw, full_filename):
 
@@ -70,7 +80,14 @@ class OpenHeka:  # TODO: doc somehwer that it will swap channel order
             return False, False
 
         reader = neo.HekaIO(self.full_filename, self.group_idx, self.series_idx)
-        neo_block = reader.read_block(force_order_to_recording_mode=True)
+
+        try:
+            neo_block = reader.read_block(force_order_to_recording_mode=True)
+
+        except BaseException as e:
+            self.mw.show_messagebox("Heka Load Error",
+                                    e.__str__())
+            return False, False
 
         return reader, neo_block
 

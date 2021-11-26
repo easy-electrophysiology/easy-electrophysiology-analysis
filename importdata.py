@@ -14,8 +14,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import copy
-
 import neo
 import numpy as np
 from PySide2.QtWidgets import QInputDialog, QMessageBox
@@ -304,7 +302,8 @@ class ImportData:
         the data even though typically they are always recorded in pA. If such a file is encountered and default behaviour
         is not specified, prompt the user to set defaults, with an additional check that the header makes sense (in some cases e.g. Axograph hiles
         the header is in A but data is scaled to nA; see show_bad_header_units_warning())
-        Otherwise, load the file as per the defaults.
+
+        Otherwise, load the file as per the defaults. HEKA files are automatically convered from A / V.
 
         Data are converted at the Data class level depending on the channel_units type, so changing units to pA here means they
         will not be converted later.
@@ -314,7 +313,6 @@ class ImportData:
         elif channel_units in ["pV", "nV", "uV", "V"]:
             channel_type = "Vm"
 
-        # TODO: fix up and have for DAT autmatically turn to A / V
         if self.ext == ".DAT":
             channel_units = "A" if channel_type == "Im" else "V"
 
