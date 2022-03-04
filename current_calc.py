@@ -143,7 +143,7 @@ def spikes_from_auto_threshold_per_spike(data,
                                          bound_start_or_stop):
     """
     Find APs from auto-thresholding without further robust thresholding based on detected APs.
-    see See auto_find_spikes() for inputs
+    see auto_find_spikes() for inputs
 
     """
     spike_info = [dict() for __ in range(data.num_recs)]
@@ -191,8 +191,8 @@ def find_candidate_spikes(vm_diff,
     an increase in diff above the positive threshold followed by a decreased below the negative threshold
 
     where ix is a sample over the differential threshold, finds all instances where within the range x : x + N there is
-    also a point under diff threshold. Deletes instaces where x increases by 1 i.e. x:x+N, x+1:x+1, x+2:x+N because these
-    are repeat instaces of the same spike.
+    also a point under diff threshold. Deletes instances where x increases by 1 i.e. x:x+N, x+1:x+1, x+2:x+N because these
+    are repeat instances of the same spike.
     """
     samples_above = np.where(vm_diff > thr["auto_thr_rise"])[0].squeeze()
     samples_above = samples_above[samples_above >= int(time_bound_start_sample + thr["N"])]  # only consider points within boundary
@@ -221,7 +221,7 @@ def clean_and_amplitude_thr_candidate_spikes_and_extract_paramters(vm,
     A problem with find_candidate_spikes() method is that because is it single-index based it will return multiple candidate
     spikes from the same spike. e.g. threshold - end, threshold + 1 - end.
 
-    Here we must delete all of these repeats from the same spike by deleting canidate spikes with cumulatively increasing first indices.
+    Here we must delete all of these repeats from the same spike by deleting candidate spikes with cumulatively increasing first indices.
     Amplitude thresholding is also conducted here.
     """
     # clean repeats which are from the same spike
@@ -335,7 +335,7 @@ def find_spikes_above_record_threshold(data,
 
 def index_out_continuous_above_threshold_samples(binary_ts, smooth=False):
     """
-    Create an vector of length = number of samples where each spike is batched to a cumulatve index i.e [00011100022200033],
+    Create an vector of length = number of samples where each spike is batched to a cumulative index i.e [00011100022200033],
     0 when data < thr or cumsum > 1...N spikes are above threshold
 
     INPUTS: binary_ts (binary timeseries): 1 x N samples of zero or 1, where period of 1s represent a continous event of
@@ -371,7 +371,7 @@ def get_peaks_idx_from_cum_idx(cum_event_index, data_vector, event_dir):
     from a 1 x n array of indices corresponding to contiguous events (e.g. [ 0 0 1 1 1 0 0 2 2 2 ]
     index out the idx, time and vm/vm for each event into a list. Use for spikes and events.
 
-    cum_event_index: 1D array of cumulatively increasing indicies seperated by zeros where each contiguous
+    cum_event_index: 1D array of cumulatively increasing indices separated by zeros where each contiguous
                      set of indices indicate an above threshold event
     data_vector: 1D array of Im or Vm data (for event or spike count respectively)
     event_dir: "positive" or "negative" (i.e. AP, GABA events and glu events respectively)
@@ -436,7 +436,7 @@ def get_first_spike_latency(spike_info,
 
             min_max_time: array of min/max time (S) per record
 
-            im_injection_start: time (S) of current injection to subtract from first spike time
+            im_injection_start: time (s) of current injection to subtract from first spike time
 
     OUTPUT: numpy array with nan = not analysed,  0 = spike or first_spike latency.
     """
@@ -460,18 +460,24 @@ def calculate_isi_measures(spike_info,
 
     INPUTS:
         spike_info: a list dictionaries, one list entry per record in the file.
-                    Dictionarys keys are spiketimes, values [spike peak Vm, spike idx]
+                    Dictionary keys are spiketimes, values [spike peak Vm, spike idx]
         analysis_type: isi method to run
 
     OUTPUT:
         analysed_data: list of calculated ISI measure, entries per record.
     """
     analysed_data = utils.np_empty_nan(len(spike_info))
+
     for rec_idx, rec_spikes in enumerate(spike_info):
-        if rec_spikes == 0 or len(rec_spikes) == 1:
+
+        if rec_spikes == 0 or len(rec_spikes) == 1 or \
+                (len(rec_spikes) == 2 and "sfa_" in analysis_type):  # rec analysed, not enough spikes
             analysed_data[rec_idx] = 0
 
-        elif len(rec_spikes) > 1:
+        elif len(rec_spikes) == 0:  # rec not analysed, leave as NaN
+            continue
+
+        else:
             sorted_rec_spikes = core_analysis_methods.sort_dict_based_on_keys(rec_spikes)
             spike_times = np.array(list(sorted_rec_spikes.keys())).astype(float)
 
@@ -554,15 +560,75 @@ def update_rheobase_after_im_round(round_or_not_round, analysis_df):
 
         rheobase_rec = analysis_df.loc[0, "rheobase"]
         if round_or_not_round == "round":
-            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta_round"]
-
+            try:
+                analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta_round"]
+            except:
+                breakpoint()
         elif round_or_not_round == "not_round":
             analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta"]
 
     return analysis_df
 
+def round_im_injection_to_user_stepsize(input_im,
+                                        step_size,
+                                        im_injection_step_direction):
+    """
+    Round raw im injection values to step size as input by user.
 
-# ---------------------------------------------------------------------------------------------------------------------------------------------------- TODO: use scipy for linregress
+    INPUT: input_im: array containing im injection value per record formatted as a pandas series
+
+           step_size: step size provided by user (e.g. 4pA)
+
+    OUTPUT: numpy array of rounded im values
+
+    TODO: split into functions a little long?
+    """
+    if not isinstance(input_im, np.ndarray):
+        input_im = np.asarray(input_im)
+
+    rounded_im_inj_np = utils.np_empty_nan((len(input_im)))
+
+    pos_idx = 0
+    for rec_idx, rec_im in enumerate(input_im):
+
+        if np.isnan(rec_im):
+            continue
+        pos_idx += 1
+
+        if step_size == 0:
+            rounded_im_inj_np[rec_idx] = rec_im
+        else:
+            rounded_im_inj_np[rec_idx] = step_size * (round(rec_im / step_size))
+
+        this_rec_rounded_im = rounded_im_inj_np[rec_idx]
+        last_rec_rounded_im = rounded_im_inj_np[rec_idx - 1]
+
+        if im_injection_step_direction == "repeat":
+            continue
+
+        elif im_injection_step_direction == "decreasing":
+            if (
+                    pos_idx > 2
+                    and
+                    last_rec_rounded_im * 0.85 < this_rec_rounded_im < last_rec_rounded_im * 1.15
+                    and
+                    last_rec_rounded_im != this_rec_rounded_im + step_size
+            ):
+                rounded_im_inj_np[rec_idx] = last_rec_rounded_im - step_size
+
+        elif im_injection_step_direction == "increasing":
+            if (
+                    pos_idx > 2
+                    and
+                    last_rec_rounded_im * 0.85 < this_rec_rounded_im < last_rec_rounded_im * 1.15
+                    and
+                    last_rec_rounded_im != this_rec_rounded_im - step_size
+            ):
+                rounded_im_inj_np[rec_idx] = last_rec_rounded_im + step_size
+
+    return rounded_im_inj_np
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Input Resistance / Im Calculation Methods
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -590,19 +656,15 @@ def calculate_input_resistance(im_in_pa,
     else:
         im_in_na = np.atleast_1d(im_in_na)
 
-        X = np.vstack([im_in_na,
-                       np.ones(len(im_in_na))]).T
-        y = vm_in_mv
-
-        I = np.linalg.inv
-        input_resistance, intercept = I(X.T @ X) @ X.T @ y
+        input_resistance, intercept, __, __, __ = scipy.stats.linregress(im_in_na,
+                                                                         vm_in_mv)
 
     return input_resistance, intercept
 
 def calculate_sag_ratio(sag_hump,
                         peak_deflections):
     """
-    Calculate the sag / hump ratio the sag / peak deflection. This is equivilent to the
+    Calculate the sag / hump ratio the sag / peak deflection. This is equivalent to the
     % of the total voltage deflection that is accounted for by the sag/hump.
 
     INPUT:
@@ -694,7 +756,7 @@ def find_negative_peak(vm,
     Find the minimum, maximum or min/max in same direction as Im injection for a bounded Im period. Used for Sag / Hump Analysis
 
     INPUTS: start_time, stop_time - time in s of the period to mind the min/max within
-            avg_over_vm - a rec x 1 array of the the average change in Vm used for following Im injection (Im not used in case of 1-channel data)
+            avg_over_vm - a rec x 1 array of the average change in Vm used for following Im injection (Im not used in case of 1-channel data)
             vm_steady_state - rec x 1 array of vm_steady_state Vm (as calculated by the 'vm_steady_state' regions during input resistance analysis)
             peak_direction - user specified direction of peak to find, either "follow_im", "min" or "max". If "follow_im", min will be
                              used if Im injection was negative and max will be used if positive
@@ -796,9 +858,9 @@ def analyse_spike_kinetics(cfgs,
     peak_time = time_[peak_idx]
 
     # check spike-analysis region does not go over edge of rec
-    if ((peak_time + cfgs.skinetics["mahp_stop"]) >= time_[-1] or
-            (peak_time + cfgs.skinetics["fahp_stop"]) >= time_[-1] or
-            start_time <= time_[0]):
+    fahp_stop_time, mahp_stop_time = get_ahp_times(cfgs, peak_time, time_)
+
+    if start_time <= time_[0] or not all([fahp_stop_time, mahp_stop_time]):
         return False
 
     # Calculate threshold and amplitude
@@ -819,12 +881,12 @@ def analyse_spike_kinetics(cfgs,
     # AHP
     fahp_time, fahp_vm, fahp_idx, fahp = core_analysis_methods.calculate_ahp(data,
                                                                              cfgs.skinetics["fahp_start"]*1000,
-                                                                             cfgs.skinetics["fahp_stop"]*1000,
+                                                                             fahp_stop_time*1000,
                                                                              vm,  time_,  peak_idx, thr_vm)
 
     mahp_time, mahp_vm, mahp_idx, mahp = core_analysis_methods.calculate_ahp(data,
                                                                              cfgs.skinetics["mahp_start"]*1000,
-                                                                             cfgs.skinetics["mahp_stop"]*1000,
+                                                                             mahp_stop_time*1000,
                                                                              vm, time_, peak_idx, thr_vm)
 
     # Rise, decay and fwhm
@@ -884,6 +946,29 @@ def analyse_spike_kinetics(cfgs,
     output["max_decay"] = {"max_slope_ms": decay_max_slope_ms, "fit_time": decay_max_slope_fit_time, "fit_data": decay_max_slope_fit_data}
 
     return output
+
+def get_ahp_times(cfgs, peak_time, time_):
+    """
+    If any of the user-set time paranters extend past the trace end, set them to the trace endpoints
+    """
+    fahp_stop_time = adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, "fahp")
+    mahp_stop_time = adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, "mahp")
+
+    return fahp_stop_time, mahp_stop_time
+
+def adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, ahp_key):
+    """
+    Determine whether the user-set fAHP or mAHP search period extends over the end of the trace. If so,
+    set it to the last timepoint in the trace. If the endpoint is now before the start point, return False.
+    """
+    ahp_stop_time = cfgs.skinetics[ahp_key + "_stop"]
+
+    if peak_time + cfgs.skinetics[ahp_key + "_stop"] >= time_[-1]:
+        ahp_stop_time = time_[-1] - peak_time
+        if ahp_stop_time <= cfgs.skinetics[ahp_key + "_start"]:
+            ahp_stop_time = False
+
+    return ahp_stop_time
 
 def run_skinetics_max_slope(thr_to_peak_time,
                             thr_to_peak_vm,
@@ -991,7 +1076,7 @@ def convert_time_to_samples(timepoint,
                             base_rec,
                             add_offset_back):
     """
-    Convert a timepoint (s) to it's nearest sample, while accouting for cumulative changes in time across records
+    Convert a timepoint (s) to it's nearest sample, while accounting for cumulative changes in time across records
 
     If the timepoint supplied is a boundary, the nearest sample may be the wrong side e.g a start boundary of 0.1 S might have it's closest
     sample as 0.0999999 S. If a boundary type ("start" or "stop") is supplied and the found timepoint is the wrong side of the bound,

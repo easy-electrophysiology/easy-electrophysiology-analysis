@@ -14,10 +14,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import copy
+
 import numpy as np
 from utils import utils
 import scipy
 from ephys_data_methods import voltage_calc
+from statsmodels.stats import diagnostic
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Curve Fitting
@@ -87,6 +90,7 @@ def gaussian_function(x, coefs):
 
 # Least Squares Cost Functions
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Note that scipy.optimize.least_squares expects the cost-function to be residuals not the sum of squared error (it handles this under the hood)
 
 def monoexp_least_squares_cost_function(coefs, x, y):
     yhat = monoexp_function(x,
@@ -250,7 +254,7 @@ def get_biexp_event_initial_est(x_to_fit,
                                 y_to_fit,
                                 direction):
     """
-    Get the Curve Fitting starting estimates for the biexpoentnial event function.
+    Get the Curve Fitting starting estimates for the biexponential event function.
 
     Since v2.3.0 rise and decay initial estimates are always taken from user configs,
     and filled in to the returned initial_est.
@@ -280,7 +284,8 @@ def get_gaussian_initial_est(x, y):
 
 def get_least_squares_fit_function(analysis_name):
     """
-    Convenient access for residual fitting functions that return y - yhat used in scipy curve fit.
+    Convenient access for residual fitting functions that return y - yhat used in scipy curve fit. Note that scipy.optimize.least_squares
+    expects the cost-function to be residuals (not sum of squared error, it handles this under the hood).
     """
     least_squares_fit_functions = {"monoexp": monoexp_least_squares_cost_function,
                                    "biexp_decay": biexp_decay_least_squares_cost_function,
@@ -313,7 +318,7 @@ def calculate_threshold(rec_first_deriv,
                         peak_idx,
                         cfgs):
     """
-    Calculate AP threshold using fisrt and third derivative methods,
+    Calculate AP threshold using first and third derivative methods,
     or the phase-space methods described in:
 
     Sekerli, M. Del Negro, C. A. Lee, R. H and Butera, R. J. (2004). Estimating action potential thresholds from
@@ -441,8 +446,8 @@ def calculate_ahp(data,
     See analyse_spike_kinetics() for inputs.
     """
     samples_per_ms = data.fs / 1000
-    ahp_search_start_idx = peak_idx + int(start_time * samples_per_ms)
-    ahp_search_stop_idx = peak_idx + int(stop_time * samples_per_ms)
+    ahp_search_start_idx = peak_idx + np.round(start_time * samples_per_ms).astype(np.int32)
+    ahp_search_stop_idx = peak_idx + np.round(stop_time * samples_per_ms).astype(np.int32)
     ahp_idx = np.argmin(vm[ahp_search_start_idx:
                            ahp_search_stop_idx + 1])
     ahp_idx = ahp_search_start_idx + ahp_idx
@@ -463,11 +468,11 @@ def calculate_fwhm(start_to_peak_time,
     Interpolation significantly increases the accuracy.
 
     start_to_peak_time: a 1 x t array containing timepoints for an event from the threshold to peak
-    start_to_peak_data: a 1 x t array containng datapoints as above
-    peak_to_end_time: a 1 x t array containg timepoints for an even from the peak to the end point (e.g. fAHP)
-    peak_to_end_data: a 1 x t array containng datapoints as above
+    start_to_peak_data: a 1 x t array containing datapoints as above
+    peak_to_end_time: a 1 x t array containing timepoints for an even from the peak to the end point (e.g. fAHP)
+    peak_to_end_data: a 1 x t array containing datapoints as above
     half_amp: scalar value, the amplitude / 2 representing the true half-maximum data
-    interp: bool, interpolate data to 200 kHz before calculting fwhm.
+    interp: bool, interpolate data to 200 kHz before calculating fwhm.
     """
     orig_rise_mid_idx = np.abs(half_amp - start_to_peak_data).argmin()  # save the un-interpred index to calculate average event from
     orig_decay_mid_idx = np.abs(half_amp - peak_to_end_data).argmin()
@@ -511,8 +516,8 @@ def calc_rising_slope_time(slope_data,
     NOTE: the reason min_ and max_ are not taken as the min or max values of the sloep_data array is in case
           these values do not correspond to the raw data e.g. if the baseline data value has been averaged over prior points.
 
-    TODO: This function is similar to to calc_falling_slope_time, though with some key differences.
-          Revisit to see if it is worthfile to factor out differences and combine into one function.
+    TODO: This function is similar to calc_falling_slope_time, though with some key differences.
+          Revisit to see if it is worthwhile to factor out differences and combine into one function.
     """
     if interp:
         slope_data, slope_time = twohundred_kHz_interpolate(slope_data, slope_time)
@@ -546,7 +551,7 @@ def calc_falling_slope_time(slope_data,
         slope_data:  timeseries from max to min of the Im or Vm (e.g. AP peak to fAHP)
         slope_time: time units of the period (s)
         max_: max value of the slope of interest (pA for Im and mV for Vm). Almost always but not necessarily
-              the max value of the timseries. e.g. AP peak or negative event baseline
+              the max value of the timeseries. e.g. AP peak or negative event baseline
         min_: min value of the slope of interst (e.g. AP fAHP or negative event peak)
         max_cutoff_perc: cutoff percentage for the minimum value
         min_cutoff_perc: cutoff percentage for the maximum value
@@ -653,6 +658,25 @@ def twohundred_kHz_interpolate(vm,
     time_array = interpolate_data(time_, time_, "linear", interp_factor, 0)
 
     return vm, time_array
+
+def area_under_curve_ms(y, ts):
+    """
+    Calculate the area under the curve of data. Note that it is assumed data is already baseline subtracted if required.
+
+    y = 1 x N data array (baseline subtracted if required)
+    ts - sampling step in seconds
+
+    OUTPUT
+        area_under_curve - area under the curve in units Data units x ms (e.g. pA ms)
+        area_under_curve_time_ms - time period over which the AUC was calculated
+    """
+    ts_ms = ts * 1000
+
+    area_under_curve_time_ms = ts_ms * (y.size - 1)
+
+    area_under_curve = np.trapz(y, dx=ts_ms)
+
+    return area_under_curve, area_under_curve_time_ms
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Data Tools
@@ -817,7 +841,7 @@ def detrend_data(x,
 
     x: time data (1 x time (1st record))
     y: data (rec x time)
-    poly_order: order of polynomial to detrend (1-20 for Detrend data manipulation)
+    poly_order: order of polynomial to detrend (1-20 for detrend data manipulation)
     """
     fit = fit_polynomial(x, y, poly_order)
     y_mean = np.mean(y) if y.ndim <= 1 else np.mean(y, axis=1)
@@ -850,6 +874,73 @@ def fit_polynomial(x,
 
     return fit
 
+# Cut trace length and normalise time
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+def cut_trace_length_time(time_method, time_array, new_start_sample, new_stop_sample):
+    """
+    Cut down the trace length between user-specified times. For mutli-record files, this provides
+    different methods the new time array can be handled (see time_method). Note the cut is not upper
+    bound inclusive.
+
+    INPUTS:
+        time_method -  "raw_times": keep the raw times e.g. if a record is cut from [0-1, 1-2] to 0.2 - 0.8 the times will be [0.2-0.8, 1.2-1.8]
+
+                       "cumulative": the new time any start offset is removed and the time increases cumulatively. e.g. [0-1, 1-2] to 0.2 - 0.8 will be [0-(0.6-ts), 0.6-(1.2-ts)]
+
+                       "normalised": the times will be the same across all records with any start offset removed e.g. [0-1, 1-2] to 0.2 - 0.8 will be [0-(0.6-ts), 0-(0.6-ts)]
+
+        time_array - rec x num_samples matrix of time points
+
+        new_start_sample, new_stop_sample - sample idx to cut the trace from / to
+
+    """
+    if time_method == "raw_times":
+        cut_time_array = time_array[:, new_start_sample:new_stop_sample]
+
+    elif time_method == "cumulative":
+        norm_time_array = cut_trace_and_normalise_time(time_array, new_start_sample, new_stop_sample)
+
+        rec_len = norm_time_array[0][-1]
+        num_recs = norm_time_array.shape[0]
+        ts = norm_time_array[0][1] - norm_time_array[0][0]
+
+        rec_nums = np.atleast_2d(np.arange(0, num_recs)).T
+        cut_time_array = norm_time_array + rec_nums * rec_len + rec_nums * ts
+
+    elif time_method == "normalised":
+        cut_time_array = cut_trace_and_normalise_time(time_array, new_start_sample, new_stop_sample)
+
+    return cut_time_array
+
+def cut_trace_and_normalise_time(time_array, new_start_sample, new_stop_sample):
+    """
+    see cut_trace_length_time()
+    """
+    norm_time_array = copy_and_normalise_time_array(time_array)
+    norm_time_array = norm_time_array[:, new_start_sample:new_stop_sample]
+    norm_time_array = norm_time_array - norm_time_array[0][0]
+
+    return norm_time_array
+
+def copy_and_normalise_time_array(time_array):
+    """
+    Normalise the time across records so it is the same for each record (use the first row and
+    repeat across all records).
+    """
+    time_array = copy.deepcopy(time_array)
+    time_array[1:None, :] = time_array[0, :]
+    return time_array
+
+# Reshape Data
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+def reshape(data, num_samples, num_records):
+    reshaped_data = np.reshape(data,
+                              [num_records, int(num_samples / num_records)])
+
+    return reshaped_data
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Cumulative Probability
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -876,7 +967,7 @@ def process_frequency_data_for_cum_prob(event_times, rec_starting_ev_idx):
     return data, sort_idx
 
 
-def process_amplitude_for_frequency_table(amplitudes):
+def process_amplitude_for_frequency_table(amplitudes, sort_method):
     """
     Return sorted, absolute amplitudes for cum prob analysis,
     and event numbers or labelling.
@@ -884,15 +975,26 @@ def process_amplitude_for_frequency_table(amplitudes):
     data = np.sort(np.abs(amplitudes))
     sort_idx = np.argsort(np.abs(amplitudes)) + 1
 
+    if sort_method == "event_num":
+        event_num_sort_idx = np.argsort(sort_idx)
+        data = data[event_num_sort_idx]
+        sort_idx = sort_idx[event_num_sort_idx]
+
     return data, sort_idx
 
-def process_non_negative_param_for_frequency_table(non_neg_param):
+def process_non_negative_param_for_frequency_table(non_neg_param, sort_method):
     """
     Return sorted non-negative parameter (decay data)
     for cum prob binning, and array of event labels.
     """
     data = np.sort(non_neg_param)
     sort_idx = np.argsort(non_neg_param) + 1
+
+    if sort_method == "event_num":
+        event_num_sort_idx = np.argsort(sort_idx)  # TODO: OWN METHOD
+        data = data[event_num_sort_idx]
+        sort_idx = sort_idx[event_num_sort_idx]
+
     return data, sort_idx
 
 def get_num_bins_from_settings(data, settings, parameter):
@@ -913,7 +1015,7 @@ def get_num_bins_from_settings(data, settings, parameter):
         num_bins = int(settings["custom_binnum"]) if settings["custom_binnum"] <= n_samples else n_samples
 
     elif binning_method == "custom_binsize":
-        num_bins = np.round(np.max(data / settings["custom_binsize"][parameter])).astype(int)  # all data is bounded by min 0 so just use max not range
+        num_bins = np.round(np.ptp(data) / settings["custom_binsize"][parameter]).astype(int)
 
     elif binning_method == "num_events_divided_by":
         num_bins = np.round(len(data) / settings["divide_by_number"]).astype(int)
@@ -927,19 +1029,20 @@ def get_num_bins_from_settings(data, settings, parameter):
 
 def calc_cumulative_probability_or_histogram(data, settings, parameter, legacy_bin_sizes):
     """
-    Return the histogram or cumulative probabilites of 'data'.
+    Return the histogram or cumulative probabilities of 'data'.
 
     INPUTS:
         data: n x 1 array of values (here Event parameter values e..g inter-event intervals)
         settings: dict of settings with fields:
             'plot_type': 'cum_prob' or 'hist'
-            'binning method': 'auto' (numpy implementdation), 'custom_binnum', 'custom_binsize', 'num_events_divided_by'
-            'custom_binnum': number of bins to divded the data into
+            'binning method': 'auto' (numpy implementation), 'custom_binnum', 'custom_binsize', 'num_events_divided_by'
+            'custom_binnum': number of bins to divide the data into
             'custom_binsize': data range of bins, same as max(data) / binnum
             'divide_by_number': divisor if 'num_events_divided_by' option is chosen
             'x_axis_display': 'bin_centers', 'left_edge', 'right_edge'
 
-        paramter: event paramter beign analysed (frequency, amplitude, decay_tay, decay_percent)
+        paramter: event paramter beign analysed (frequency, amplitude, decay_tay, decay_percent..
+                                                 (see configs, frequency_data_options["custom_binsize"]))
         legacy_bin_sizes: bool
     """
     cum_prob_or_hist = settings["plot_type"]
@@ -1010,7 +1113,7 @@ def calc_cumulative_probability(data, num_bins, limits):
 
 def format_bin_edges(bin_edges, x_axis_display):
     """
-    Format n + 1 array of bin edges for a histogram or cumumlative probability plot.
+    Format n + 1 array of bin edges for a histogram or cumulative probability plot.
 
     INPUTS:
         'bin edges': n + 1 list of bins, n x 1 array
@@ -1033,6 +1136,105 @@ def format_bin_edges(bin_edges, x_axis_display):
 
 def get_bin_centers(bin_edges):
     return bin_edges[0:-1] + (np.diff(bin_edges) / 2)
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Analysis
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+def run_ks_test(data1, method, pop_mean=None, pop_stdev=None, format_p_for_gui=True):
+    """
+    Run a one- or two-sample KS test. It is assumed data1 and data2 are already
+    checked n matches. It would be neater to call scipy function once and pass
+    empty args for args, n. But do not want to pass unused args to scipy function.
+
+    data1 - 1 x N array of raw data values (not a CDF)
+
+    data2 - 1 x N array of raw data values for a 2-sample KS test, or None for one sample (compared to gaussian M, SD of data1)
+
+    alternative_hypothesis - tails on the test, see scipy.stats.kstest()
+
+    format_p_for_gui - format p value for display on GUI
+    """
+    n = len(data1)
+
+    if method == "lilliefors":
+
+        results_tuple = diagnostic.lilliefors(data1)
+
+    elif method == "user_input_population":
+
+        results_tuple = scipy.stats.kstest(rvs=data1,
+                                           cdf="norm", args=(pop_mean, pop_stdev), N=n,
+                                           alternative="two-sided",  mode="auto")
+    if np.isnan(results_tuple).any():
+        return False
+
+    results = handle_ks_test_results_tuple(results_tuple, n, format_p_for_gui)
+
+    return results
+
+def run_two_sample_ks_test(data1, data2, alternative_hypothesis, format_p_for_gui=True):
+    """
+    Run a one- or two-sample KS test. It is assumed data1 and data2 are already
+    checked n matches. It would be neater to call scipy function once and pass
+    empty args for args, n. But do not want to pass unused args to scipy function.
+
+    data1 - 1 x N array of raw data values (not a CDF)
+
+    data2 - 1 x N array of raw data values for a 2-sample KS test, or None for one sample (compared to gaussian M, SD of data1)
+
+    alternative_hypothesis - tails on the test, see scipy.stats.kstest()
+
+    format_p_for_gui - format p value for display on GUI
+    """
+    n = len(data1)
+
+    results_tuple = scipy.stats.kstest(rvs=data1,
+                                       cdf=data2,
+                                       alternative=alternative_hypothesis,
+                                       mode="auto")
+    results = handle_ks_test_results_tuple(results_tuple, n, format_p_for_gui)
+
+    return results
+
+def handle_ks_test_results_tuple(results_tuple, n, format_p_for_gui):
+
+    results = {
+        "statistic": results_tuple[0],
+        "pvalue": results_tuple[1],
+        "n": n,
+    }
+
+    if format_p_for_gui:
+        results["pvalue"] = format_p_value(results["pvalue"])
+
+    return results
+
+def format_p_value(p):
+    """
+    Format p value for display in GUI.
+
+    Sometimes p values returned from scipy can be very small e.g. <1e-297. For convenient display
+    cutoff at <1e-08.
+    """
+    if p >= 1e-08:
+        format_p = "{0:.8f}".format(p).rstrip("0")
+    elif p < 1e-08:
+        format_p = "<1e-08"
+    return format_p
+
+
+def calc_empirical_cdf(data):
+    """
+    Calculate the empirical cumulative distribution function from a 1 x N sorted array.
+
+    Note that np.unique outputs sorted data (smallest to largest)
+    """
+    x_values, counts = np.unique(data,
+                                 return_counts=True)
+    cumprob = np.cumsum(counts) / len(data)
+
+    return x_values, cumprob
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Calculate Data Params
@@ -1081,8 +1283,8 @@ def nearest_point_euclidean_distance(x1, timepoints, y1, datapoints):
 
     INPUTS:
 
-    x1, y1: coordinates of a datapoint
-    timepoints (x1...xn), datapoints (y1...yn): coordinates of datapoints to find the closest
+        x1, y1: coordinates of a datapoint
+        timepoints (x1...xn), datapoints (y1...yn): coordinates of datapoints to find the closest
     """
     time_std = np.std(timepoints)
     data_std = np.std(datapoints)

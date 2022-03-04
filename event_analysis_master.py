@@ -18,6 +18,7 @@ import numpy as np
 from ephys_data_methods import voltage_calc, core_analysis_methods, current_calc
 from utils import utils
 import scipy.signal
+import copy
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Fit Sliding Window
@@ -27,8 +28,8 @@ def fit_sliding_window(im_array, run_settings, progress_bar_callback):
     """
     Calculate the sliding window correlation or detection criterion using the algorithm of Clements and Betters (1997).
 
-    Due to the implimentation of the sliding window method the template b1 must be forced positive. Dont normalise the template,
-    does not effect the cutoff vs. data detection criterion scaling but makes the show fit plot on the data incorrect.
+    Due to the implementation of the sliding window method the template b1 must be forced positive. Don't normalise the template,
+    does not affect the cutoff vs. data detection criterion scaling but makes the show-fit plot on the data incorrect.
     """
     template = make_template_from_run_settings(run_settings,
                                                override_b1=1,
@@ -73,9 +74,9 @@ def make_template_from_run_settings(run_settings, override_b1=False, normalise=F
     """
     Generate the biexponential event template based on user-input options.
 
-    override_b1: can overrise the b1 for the template, otherwise the direction (-1 or 1) will be used
+    override_b1: can override the b1 for the template, otherwise the direction (-1 or 1) will be used
 
-    normalise: if true, template will be normalised 0 = 1 or -1 (depending b1)
+    normalise: if true, template will be normalised 0 = 1 or -1 (depending on b1)
     """
     W = int(run_settings["window_len_s"] / run_settings["ts"])
     x = core_analysis_methods.generate_time_array(0,
@@ -142,8 +143,6 @@ def calculate_event_peaks(detection_coefs,
                           im_array,
                           run_settings):
     """
-    Explain more, revise, deconv. does not cover the ev in the same way as corr.
-
     Threshold events from their peak and correlation values and save them to self.event_info dict.
 
     After sliding window fit, we have a correlation value at each timepoint for the correlation of the biexp fit
@@ -192,7 +191,7 @@ def calculate_event_peaks(detection_coefs,
 def sliding_window_peak_detection(im_array, peaks, run_settings):
     """
     Legacy method for event detection - in the end smoothing the correlation coefficient / detection criteria
-    decreased the temporal resolution. Further, a more robust method of peak detection is implimented
+    decreased the temporal resolution. Further, a more robust method of peak detection is implemented
     based on the expected difference from baseline to peak, based on deconvolution methods.
     """
     smoothing_window = int(run_settings["window_len_samples"] * 0.5)
@@ -208,7 +207,7 @@ def sliding_window_peak_detection(im_array, peaks, run_settings):
 
 def get_peaks_for_deconvolution(deconvolution, cum_event_index, im_array, run_settings):
     """
-    Find all of the peaks above threshold in the deconvolution trace.
+    Find all the peaks above threshold in the deconvolution trace.
 
     Then find the nearest peak in the data following the deconv peak within 3x ("deconv_peak_search_region_multiplier")
     the number of samples from baseline to peak.
@@ -222,7 +221,7 @@ def get_peaks_for_deconvolution(deconvolution, cum_event_index, im_array, run_se
     search_region = int(bl_to_peak) * voltage_calc.consts("deconv_peak_search_region_multiplier")
 
     # cut idx that are out of data range,
-    # reshape into peak_num x peak: peak + search region indicies
+    # reshape into peak_num x peak: peak + search region indices
     deconv_peaks_idx = np.delete(deconv_peaks_idx,
                                  np.where(deconv_peaks_idx + search_region > len(im_array)))
     deconv_peaks_idx = np.atleast_2d(deconv_peaks_idx).T
@@ -240,7 +239,7 @@ def make_peak_event_info_from_peaks_idx(time_,
                                         peaks_idx,
                                         run_settings):
     """
-    From an array of peak indicies perform checks for threshold_lower, threshold_upper and omit times.
+    From an array of peak indices perform checks for threshold_lower, threshold_upper and omit times.
 
     See check_putatitve_event() for details on checks.
     The extended event_info that is used for full analysis can be found at cfgs.make_event_info_dict()
@@ -262,12 +261,12 @@ def make_peak_event_info_from_peaks_idx(time_,
         if run_settings["name"] == "event_kinetics":
             if ("manual_select" not in run_settings or
                     run_settings["manual_select"]["use_thresholding"]):
-                sucess = check_putative_event(peak_idx,
-                                              peak_time,
-                                              peak_im,
-                                              run_settings)
+                success = check_putative_event(peak_idx,
+                                               peak_time,
+                                               peak_im,
+                                               run_settings)
 
-                if not sucess:
+                if not success:
                     continue
 
         event_info[str(peak_time)] = {"peak": {"time": peak_time, "im": peak_im, "idx": peak_idx, "template_num": template_num, "direction": run_settings["direction"]}}
@@ -411,11 +410,11 @@ def calculate_event_kinetics(time_,
         return False
 
     # Event Fitting
-    sucess = caculate_decay_and_fit_monoexp_or_biexp(time_,
-                                                     data,
-                                                     event_info,
-                                                     run_settings)
-    if not sucess:
+    success = caculate_decay_and_fit_monoexp_or_biexp(time_,
+                                                      data,
+                                                      event_info,
+                                                      run_settings)
+    if not success:
         return False
 
     # Rise Time
@@ -440,6 +439,12 @@ def calculate_event_kinetics(time_,
                         event_info,
                         run_settings)
 
+    # Area Under Curve (AUC)
+    success = calculate_area_under_curve_and_threshold(data, time_, event_info, run_settings)
+
+    if not success:
+        return False
+
     return event_info
 
 # Baseline
@@ -455,7 +460,7 @@ def calculate_event_baseline(time_,
 
     There are two main settings - detect baseline per-event or use a pre-defined threshold
 
-    Per-event: find_foot method: events may be detected by the "find_foot" method which find the baseline by calculating a the
+    Per-event: find_foot method: events may be detected by the "find_foot" method which find the baseline by calculating the
                                  foot from the peak algorithmically. This can then be smoothed by the "average_baseline_points" option.
 
     pre-defined threshold:   This can be either a straight line (linear, basically a single baseline value), a curve or drawn.
@@ -523,7 +528,6 @@ def calculate_event_baseline(time_,
                                                                         time_,
                                                                         bl_idx, bl_im,
                                                                         event_info, run_settings, bl_results)
-
     return bl_results
 
 def enhance_baseline_position_and_resmooth_if_required(data,
@@ -560,7 +564,7 @@ def calculate_event_baseline_from_data_baseline(time_,
 
     elif run_settings["baseline_type"] in ["curved", "drawn"]:
         threshold = run_settings["baseline"][run_settings["rec"]]
-        if window > peak_idx:  # make sure index not outside availble data
+        if window > peak_idx:  # make sure index not outside available data
             window = peak_idx
         thr_im = threshold[peak_idx - window: peak_idx + 1]
 
@@ -586,7 +590,7 @@ def average_baseline_points(data,
 
 def event_baseline_is_before_previous_event_peak(bl_idx, run_settings):
     """
-    Convenience function to check that the baseline detected is not before the previous event peak
+    Convenience function to check that the baseline detected is not before the previous event peak.
     """
     return run_settings["previous_event_idx"] is not None and \
         bl_idx < run_settings["previous_event_idx"]
@@ -619,7 +623,7 @@ def caculate_decay_and_fit_monoexp_or_biexp(time_,
     """
     First calculate the event endpoint, to which the function will be fit / decay % parameter searched for.
 
-    Then fit the function based on user settings and update event_info
+    Then fit the function based on user settings and update event_info.
     """
     event_info["decay_point"] = calculate_event_endpoint(time_,
                                                          data,
@@ -674,7 +678,7 @@ def calculate_event_endpoint(time_,
     Find the end of the event. If edit kinetics mode is on and baseline is moved, the idx of decay is pre-stored in run_settings so that
     decay endpoint is not re-calculated in case user previously changed it manually.
 
-    Otherwise, calculate the event endpoint based on the users settings
+    Otherwise, calculate the event endpoint based on the users settings.
     """
 
     if run_settings["edit_kinetics_mode"]:
@@ -688,7 +692,7 @@ def calculate_event_endpoint(time_,
     window = core_analysis_methods.quick_get_time_in_samples(run_settings["ts"],
                                                              run_settings["decay_search_period_s"])
     if window < 3:
-        return False  # dont let search period be too small or causes errors downstream (e.g. individual event presentation) TODO: could handle this at widget level
+        return False  # dont let search period be too small or causes errors downstream (e.g. individual event presentation)
 
     bl_im = event_info["baseline"]["im"]
     peak_idx = event_info["peak"]["idx"]
@@ -745,7 +749,7 @@ def fit_monoexp_function_to_decay(time_,
     Fit a monoexponential function to the decay period (data between peak and decay endpoint). Note that if fitting fails
     the event is excluded from analysis.
 
-    First, fit a curve between peak and decay poiint. Then, if user has specified to adjust startpoint
+    First, fit a curve between peak and decay point. Then, if user has specified to adjust startpoint
     either using r2 or bounds as a cutoff, update the fit by adjusting the startpoint with adjust_fit_start_point().
 
     Next, perform final checks on r2 and bounds (if user has selected these options. For R2, it is excluded if
@@ -803,8 +807,8 @@ def calculate_biexp_fit_to_event(time_,
     """
     Fit a biexponential function to the event.
 
-    First, if analysis is Events TEmplate, use the initial estimate for the fit from the biexpoential template.
-    Otherwise, set to None to use cannonical defaults (rise: 0.5 ms, decay: 5ms).
+    First, if analysis is Events Template, use the initial estimate for the fit from the biexpoential template.
+    Otherwise, set to None to use canonical defaults (rise: 0.5 ms, decay: 5ms).
     """
     opts = run_settings["biexp_fit"]
     x_to_fit = time_[bl_idx:decay_idx + 1]
@@ -980,7 +984,7 @@ def calculate_decay_percent(time_,
                             event_info,
                             run_settings):
     """
-    Find the decay point that is at the user-specifed percent of the event amplitude.
+    Find the decay point that is at the user-specified percent of the event amplitude.
     If a monoexponential or biexpoential is fit to the event, use this to find the % point.
     """
     peak_idx = event_info["peak"]["idx"]
@@ -1097,6 +1101,10 @@ def calculate_event_rise_time(time_,
                                                                                                                min_cutoff_perc=run_settings["rise_cutoff_low"],
                                                                                                                max_cutoff_perc=run_settings["rise_cutoff_high"],
                                                                                                                interp=run_settings["interp_200khz"])
+
+    if rise_time < 0:
+        return False
+
     rise_time_results = {"min_time": rise_min_time, "min_im": rise_min_im, "max_time": rise_max_time,
                          "max_im": rise_max_im, "rise_time_ms": rise_time * 1000}
 
@@ -1113,7 +1121,7 @@ def calculate_half_width(time_,
     """
     Find the half-width of the event.
 
-    If a biexponential is fit, calculate halfwidth on this. If decay monoexponetial or decay is smoothed,
+    If a biexponential is fit, calculate half-width on this. If decay monoexponetial or decay is smoothed,
     calculate decay-side midpoint from this.
     """
     bl_idx, peak_idx, bl_im, amplitude, decay_perc_info = [event_info["baseline"]["idx"],
@@ -1208,7 +1216,7 @@ def calculate_max_slope_rise_or_decay(time_, data, rise_or_decay, event_info, ru
 
     For the decay, the period searched can be to the event endpoint calculated by whatever method the user has chosen,
     or always be the first crossover method. The first crossover method is more accurate and faster than the entire search region
-    method. If the user has already chosen the crossover method, there is no need to calculate. However if the user is using
+    method. If the user has already chosen the crossover method, there is no need to calculate. However, if the user is using
     entire search region to calculate the event endpoint, it will need to be calculated here.
     """
     if rise_or_decay == "rise":
@@ -1245,8 +1253,55 @@ def calculate_max_slope_rise_or_decay(time_, data, rise_or_decay, event_info, ru
                                                                                                ts=run_settings["ts"],
                                                                                                smooth_settings=run_settings["max_slope"]["smooth"],
                                                                                                argmax_func=argmax_func)
-
     return max_slope_ms, fit_time, fit_data
+
+
+def calculate_area_under_curve_and_threshold(data, time_, event_info, run_settings):
+    """
+    Calculate the area under the event (from baseline to end of decay period).
+
+    Set the first datapoint to the bl im value in case the baseline is smoothed. This will have a very small effect,
+    but image a large positive noise spike at 1 pA at the baseline in a negative-going event with peak -5 pA.
+    The baseline smoothed is say 0 pA. If the first idx is left free, it will decrease the area slightly due to
+    this noise. However we are interested in the AUC from the baseline onwards, so set this first datapoint to the baseline.
+
+    For curve fitting and average event analysis, the data to plot for AUC curves is saved to event_info for reconstruction
+    in the plots. This is not the case for standard analysis because it is easy to reconstruct this from mainwindow data,
+    and will not waste memory as curve fitting / average event number is low (e.g. 1 event).
+    """
+    bl_idx, decay_idx = [event_info["baseline"]["idx"],
+                         event_info["decay_point"]["idx"]]
+
+    y = copy.deepcopy(data[bl_idx:decay_idx + 1])
+    y[0] = event_info["baseline"]["im"]
+    norm_y = y - y[0]
+
+    area_under_curve, \
+        area_under_curve_time_ms = core_analysis_methods.area_under_curve_ms(norm_y,
+                                                                             run_settings["ts"])
+
+    if (run_settings["area_under_curve"]["on"] and
+            "curve_fitting_or_average_event_flag" not in run_settings):  # dont threshold c.f. or average event
+        if np.abs(area_under_curve) < run_settings["area_under_curve"]["value_pa_ms"]:
+            return False
+
+    save_auc_results_to_event_info(event_info, area_under_curve, area_under_curve_time_ms,
+                                   run_settings, y, time_, bl_idx, decay_idx)
+
+    return True
+
+def save_auc_results_to_event_info(event_info, area_under_curve, area_under_curve_time_ms,
+                                   run_settings, y, time_, bl_idx, decay_idx):
+    """
+    see calculate_area_under_curve_and_threshold()
+    """
+    event_info["area_under_curve"]["im"] = area_under_curve
+    event_info["event_period"]["time_ms"] = area_under_curve_time_ms
+
+    if "curve_fitting_or_average_event_flag" in run_settings and run_settings["curve_fitting_or_average_event_flag"]:
+        event_info["area_under_curve"]["event_data"] = y
+        event_info["area_under_curve"]["time_array"] = time_[bl_idx:decay_idx + 1]
+        event_info["area_under_curve"]["baseline_period"] = np.repeat(event_info["baseline"]["im"], len(y))
 
 def need_to_recalculate_event_endpoint(run_settings):
     """
@@ -1345,7 +1400,6 @@ def make_event_info_dict():
 
     NOTE: if editing this, ensure convert_event_info_serializable() is updated on VoltageClampDataModel.
           This is particularly important if adding a third dict. layer.
-
     """
     event_info = {"peak": {"time": None, "im": None, "idx": None},
                   "baseline": {"time": None, "im": None, "idx": None},
@@ -1364,6 +1418,10 @@ def make_event_info_dict():
                   "half_width": {"rise_midtime": None, "rise_mid_im": None, "decay_midtime": None,
                                  "decay_mid_im": None, "fwhm_ms": None},
                   "record_num": {"rec_idx": None},
+
+                  "area_under_curve": {"im": None, "event_data": None, "baseline_period": None, "time_array": None},  # note baseline_period and time_array are only used for curve fitting and event average kinetics plotting
+
+                  "event_period": {"time_ms": None},
 
                   "max_rise": {"max_slope_ms": [np.nan],
                                "fit_time": [np.nan],
