@@ -12,7 +12,7 @@ from PySide2 import QtCore
 class OpenHekaDialog(QDialog):
     """
     TreeWidget that emits signal of group and series index from a list of
-     HEKA group / series when the series is double clicked.
+    HEKA group / series when the series is double-clicked.
     """
     tree_clicked = QtCore.Signal(int, int)
 
@@ -40,7 +40,9 @@ class OpenHekaDialog(QDialog):
         self.dia.tree_widget.itemDoubleClicked.connect(self.handle_item_double_clicked)
 
     def handle_item_double_clicked(self, item):
-
+        """
+        Handle the user double-clicked to select an item to load
+        """
         if item.childCount() != 0:  # ignore top level (i.e. Group)
             return
 
@@ -53,11 +55,11 @@ class OpenHekaDialog(QDialog):
 
 class OpenHeka:
     """
-    Wrapper around custom Neo IO that wraps LoadHeka module. The custom NeoIO will force the channel order to be
+    Wrapper around custom Neo IO that wraps Load Heka module. The custom NeoIO will force the channel order to be
     according to the recording type (voltage clamp  or current clamp, e.g. if voltage clamp, Im first and Vm second).
 
-    If two input channels are available, both will be loaded and the stimulation protocol will be ignored. Otherwise
-    if only one channel is available as well as the a stimulus protocol, the stimulus protocol will be reconstructed
+    If two input channels are available, both will be loaded and the stimulation protocol will be ignored. Otherwise,
+    if only one channel is available as well as the stimulus protocol, the stimulus protocol will be reconstructed
     and set as he second channel (name 'stimulation').
     """
     def __init__(self, mw, full_filename):
@@ -67,8 +69,14 @@ class OpenHeka:
         self.group_idx = None
         self.series_idx = None
 
-        with load_heka.LoadHeka(self.full_filename, only_load_header=True) as self.heka:
-            dict_of_groups_series = self.heka.get_dict_of_group_and_series()
+        try:
+            with load_heka.LoadHeka(self.full_filename, only_load_header=True) as self.heka:
+                dict_of_groups_series = self.heka.get_dict_of_group_and_series()
+
+        except BaseException as e:
+            self.mw.show_messagebox("Heka Load Error",
+                                    e.__str__())
+            return
 
         self.heka_dialog = OpenHekaDialog(self.mw, dict_of_groups_series)
         self.heka_dialog.tree_clicked.connect(self.save_group_series_idx)

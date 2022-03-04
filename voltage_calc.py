@@ -27,12 +27,12 @@ import scipy.fftpack as fftpack
 
 def clements_bekkers_sliding_window(data, template, u):
     """
-    Sliding window template matching with implimentation details from Clements and Bekkers (1997). This is
+    Sliding window template matching with implementation details from Clements and Bekkers (1997). This is
     a highly optimised method to perform sliding window template matching. See the original paper for derivation.
 
     Pad the end of the data so the last n samples are not ignored. The correlation method is also calculated using this algorithm
-    for speed. This neccessitates that the correlation coefficient does not account for negative correlations between template and data. However,
-    as the template is first scaled to match the data, negative correlates will not be possible. Testing shows this implimentation exactly matches
+    for speed. This necessitates that the correlation coefficient does not account for negative correlations between template and data. However,
+    as the template is first scaled to match the data, negative correlates will not be possible. Testing shows this implementation exactly matches
     a version in which the r can be negative or positive.
 
     data: 1 x t array of data
@@ -120,7 +120,7 @@ def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz
     """
     Return filtered deconvolution of template and data.
 
-    Data and template are transformed to the Fourier domain (where deconvolution is pointwise division)
+    Data and template are transformed to the Fourier domain (where deconvolution is point-wise division)
     and filter with a Gaussian window before inverse FFT.
 
     INPUTS:
@@ -163,7 +163,7 @@ def fft_filter_gaussian_window(data, low_hz, high_hz, num_samples, fs):
 def calculate_deconv_detection_threshold(detection_coefs, n_times_sigma):
     """
     Calculate sigma, the detection threshold for deconvolution event detection.
-    Sigma is the standard deviation from the all-points histogram of the deconvoulution. For
+    Sigma is the standard deviation from the all-points histogram of the deconvolution. For
     multi-record files the deconvolution is collapsed across all records.
 
     The histogram is 10x upsampled by linear interpolation before Gaussian fitting.
@@ -252,8 +252,8 @@ def check_peak_against_threshold_lower(peak_im,
                                                   and ["n_times_rms"] which is a scalar value for user-specified n times the rms
                                                   calculated between the data and baseline.
 
-    This function is called a lot - minimze coppying or addition and operate on one index only.
-    Coded explicitly here as very confusing otherwise with all the diferent possibilities
+    This function is called a lot - minimize copying or addition and operate on one index only.
+    Coded explicitly here as very confusing otherwise with all the different possibilities
 
     OUTPUT:
         within_threshold: bool indicating whether the peak is within the threshold (True) or not
@@ -312,7 +312,7 @@ def find_event_peak_after_smoothing(time_array,
     The solution to this is to first smooth the entire event, then find the peak. The second version of this function
     smoothed the event and then searched the entire event window. However, because for threshold analysis the
     event window is defined by the decay search period, when the user set to large decay search period
-    very strange behaviour occured. If an event was selected manually, the event detected could be very
+    very strange behaviour occurred. If an event was selected manually, the event detected could be very
     far away, because the entire "event" region was searched.
 
     The final, best solution is to smooth the entire event but only search a small region around the original peak
@@ -350,7 +350,7 @@ def find_event_peak_after_smoothing(time_array,
     smoothed_ev = quick_moving_average(x=ev_im,  n=samples_to_smooth)
 
     # Things get a little hairy with indexing here. Be careful if refactoring.
-    # We want to index around the peak in terms of the smoothed event only. The we want to convert this back to full data indicies.
+    # We want to index around the peak in terms of the smoothed event only. Then we want to convert this back to full data indices.
     # But also need to make sure the start index is never less than zero or more than the length of the event.
     ev_peak_idx = peak_idx - start_idx
     smooth_search_period = samples_to_smooth * consts("event_peak_smoothing")
@@ -364,7 +364,7 @@ def find_event_peak_after_smoothing(time_array,
 
     smoothed_ev_peak_search_region = smoothed_ev[peak_search_region_start:peak_search_region_end + 1]
 
-    # Find the peak of the smoothed event and convert indicies back to full data
+    # Find the peak of the smoothed event and convert indices back to full data
     if direction == 1:
         smoothed_peak_im = np.max(smoothed_ev_peak_search_region)
         smoothed_peak_idx = start_idx + peak_search_region_start + np.argmax(smoothed_ev_peak_search_region)
@@ -386,10 +386,10 @@ def calculate_event_baseline(time_array,
                              direction,
                              window):
     """
-    Find the baseline of an event from the peak autoamtically ("per_event" in configs).
+    Find the baseline of an event from the peak automatically ("per_event" in configs).
 
     First determine the region to search for the baseline. This is taken as half the search window, which
-    works well when tested across events with many different types of kinetics.
+    works well when tested across events with different types of kinetics.
 
     Within this region, draw a straight line from each sample to the peak. Of these lines, take the steepest (i.e. closest to the
     peak) but within the top 40% of lengths. This is to protect against noise on the peak which can cause 1-2 steep, short lines.s
@@ -429,7 +429,7 @@ def calculate_event_baseline(time_array,
 def enhanced_baseline_calculation(data, time_, bl_idx, bl_im, event_info, run_settings):
     """
     Enhanced baseline detection based on moving the baseline close to the event foot.
-    A straight line is drawn between the 20-80 rise time points and the interesection with the detected baseline is taken as the event foot.
+    A straight line is drawn between the 20-80 rise time points and the intersection with the detected baseline is taken as the event foot.
     This will only change the position of the baseline, not its Im value which is previously calculated.
 
     Jonas P, Major G, Sakman B. (1993) Quantal components of unitary EPSCs at the mossy fibre
@@ -587,6 +587,9 @@ def decay_point_first_crossover_method(time_array,
                                                                       window,
                                                                       use_legacy=False)
 
+    if decay_idx is False:
+        return False, False, False
+
     if run_settings["next_event_baseline_idx"] is not None and \
             decay_idx >= run_settings["next_event_baseline_idx"]:
         decay_idx = run_settings["next_event_baseline_idx"] - 1
@@ -612,7 +615,7 @@ def calculate_event_decay_point_crossover_methods(time_array,
     decay_period_data = data[peak_idx:peak_idx + window + 1]
 
     if len(decay_period_data) < 2:
-        return False, False
+        return False, False, False
 
     offset = 100000 if direction == 1 else -100000  # ensures data wholly positive or negative (cannot use abs * direction)
     decay_period_data = decay_period_data + offset
@@ -676,11 +679,11 @@ def decay_endpoint_legacy_method(decay_period_data, peak_idx, direction):
     Old method of finding end of event, simply taking the min / max value of the search region.
 
     Just in case a doublet is included in the window length (and if wanting to increase window length somewhat) the
-    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exagerated.
-    Then the miniumm point before the maximum is taken.
+    event amplitudes are first weighted as the inverse of the time point. This means second spikes are exaggerated.
+    Then the minimum point before the maximum is taken.
 
-    This method is depreciated and only kept for past users who may need it and is earmarked for full depreciation in future.
-    It is superceeded by methods that take into account the next event, and so do not need to find the next peak.
+    This method is depreciated and only kept for past users who may need it and is earmarked for full depreciation in the future.
+    It is superseded by methods that take into account the next event, and so do not need to find the next peak.
     """
     time_idx = np.arange(1, len(decay_period_data) + 1)
     weight_distance_from_peak = consts("weight_distance_from_peak")
@@ -710,12 +713,12 @@ def calclate_decay_percentage_peak_from_smoothed_decay(time_array,
                                                        interp):
     """
     To increase speed there is the option to not fit a exp to decay.
-    In this instance we need to calculate the decay percentage point from the data. However when there
+    In this instance we need to calculate the decay percentage point from the data. However, when there
     is noise this works poorly. Thus smooth before.
 
     INPUTS:
         decay_exp_fit_time - 1 x time array of timepoints between peak and decay end point
-        decay_exp_fit_im - 1 x time array of datapoints (typically Im for events) between peak and decay end point
+        decay_exp_fit_im - 1 x time array of data-points (typically Im for events) between peak and decay end point
         ev_amplitude - Amplitude of the event (peak - baseline)
         amplitude_percent_cutoff - percentage of amplitude that the decay has returned to, 37% default
         peak_idx, decay_idx - sample of event peak and decay
@@ -750,7 +753,7 @@ def calclate_decay_percentage_peak_from_smoothed_decay(time_array,
                                                                                                  ev_amplitude,
                                                                                                  amplitude_percent_cutoff)
 
-    raw_smoothed_decay_time = time_array[peak_idx: decay_idx + 1]  # have to re-init in case was interped
+    raw_smoothed_decay_time = time_array[peak_idx: decay_idx + 1]  # have to re-init in case was interpolated
     raw_smoothed_decay_im = quick_moving_average(decay_im, smooth_window_samples)
 
     return decay_percent_time, decay_percent_im, decay_time_ms, \
@@ -799,7 +802,7 @@ def find_nearest_decay_sample_to_amplitude(decay_time,
 
     e.g. if user has set decay % to 37%, we want to find the datapoint that is 37% of the decay
     amplitude. This might not be an exact sample so find the nearest.
-    See calclate_decay_percentage_peak_from_smoothed_decay for input / output.
+    See calculate_decay_percentage_peak_from_smoothed_decay for input / output.
     """
     amplitude_fraction = amplitude_percent_cutoff / 100
     amplitude_fraction = bl_im + ev_amplitude * amplitude_fraction
@@ -844,15 +847,10 @@ def calculate_event_rise_time(time_array,
 
 def quick_moving_average(x, n):
     """
-    Use np.convolve for speed extending the array prior to smoothing with hte first / last sample and cutting down again. This gives
-    good performance for the edges, better than the previous version (<v2.3.0-beta) in which interative decreasing the window size was used.
+    Smooth using convolution with a box function, padding the start and end of array to handle edge effects.
 
-    For odd window, the window is perfectly centered. For even windows, there the is off-center one half-step down. This is
-    intrinc to the convolution method of smoothing. e.g. [x1, x2, x3, x4, x5] smoothed with a 4 sample window at idx 2 will average
-    x1, x2, x3, x4.
-
-    Other methods are available for full centering (e.g. Savitzky–Golay filter, direct for-loop implimentation) but testing found they
-    are either much slower or underperform in this situation with small window and sample number.
+    x: array to smooth
+    n: samples to smooth
     """
     data = np.hstack([np.tile(x[0], n), x, np.tile(x[-1], n)])
     out = np.convolve(data, np.ones(n) / n, mode="same")
@@ -868,45 +866,18 @@ def is_at_least_zero(start_idx):
         start_idx = 0
     return start_idx
 
-def normalise_amplitude(data):
-    """
-    Normalise the amplitude of an event to 1 for display purposes.
 
-    Don"t demean to remove baseline as the first-sample is more important for cutting the left edge
-    when generating the template.
+def normalise_amplitude(data, demean=False):
     """
-    data = data - data[0]
+    Scale to unity amplitude with optional demean.
+    """
+    amplitude = np.abs(np.max(data) - np.min(data))
+    norm_curve = data / amplitude
 
-    amplitude = find_amplitude_min_or_max(data,
-                                          use_first_sample_as_baseline=True)
-    norm_curve = data * (1 / np.abs(amplitude))
+    if demean:
+        norm_curve = norm_curve - np.mean(norm_curve)
 
     return norm_curve
-
-
-def find_amplitude_min_or_max(data, use_first_sample_as_baseline):
-    """
-    Find the minimum or maximum peak of a trace (normalised to zero) depending on which is larger.
-    Useful for single events where it is not known if they are positive or negative.
-
-    NOTE: Only works if data normanlised to zero start point.
-    """
-    abs_min = np.abs(np.min(data))
-    abs_max = np.abs(np.max(data))
-
-    if abs_max > abs_min:
-        baseline = np.min(data)
-        peak = np.max(data)
-    else:
-        peak = np.min(data)
-        baseline = np.max(data)
-
-    if use_first_sample_as_baseline:
-        baseline = data[0]
-
-    amplitude = peak - baseline
-
-    return amplitude
 
 def consts(constant_name):
     """
@@ -914,10 +885,10 @@ def consts(constant_name):
 
     constant_name -
 
-    "bl_pecentile" - percentile for slope length used in auto. baseline detection
-    "weight_distance_from_peak" - weight on the automatic decay endpoint finder to increase noise by distance from peak.
-                                  Rarely, the exp grow too large and undefined, throwing a numpy RunTimeWarning (rare)
-    "decay_period_to_smooth" - smooth the decay period when auto-detected decay period end to avoid noise spikes biasing the result.
+        "bl_percentile" - percentile for slope length used in auto. baseline detection
+        "weight_distance_from_peak" - weight on the automatic decay endpoint finder to increase noise by distance from peak.
+                                      Rarely, the exp grow too large and undefined, throwing a numpy RunTimeWarning (rare)
+        "decay_period_to_smooth" - smooth the decay period when auto-detected decay period end to avoid noise spikes biasing the result.
 
     """
     if constant_name == "bl_percentile":
