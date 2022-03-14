@@ -80,7 +80,7 @@ class GuiTestSetup:
             self.norm_time_data_path = os.path.join(self.test_base_dir, "four_channel_input.wcp")
         elif test_filetype == "test_tags":
             self.file_ext = ".abf"
-            self.norm_time_data_path = os.path.join(self.test_base_dir, "mels_tagged_file_1709.abf")
+            self.norm_time_data_path = os.path.join(self.test_base_dir, "tagged_file_1709.abf")
 
         self.qt_buttons = {
             "0": QtGui.Qt.Key_0,
@@ -1554,7 +1554,7 @@ class GuiTestSetup:
                 lower_bound += self.adata.min_max_time[:, 0]
             return lower_bound
 
-    def reshape_skinetics_data_into_table(self, skinetics_data):  # TODO: MESSY NOW !
+    def reshape_skinetics_data_into_table(self, skinetics_data):
         """
         Reshape skinetics_data into table for testing. Ignore record and skinetics num as hard to reshape
         """

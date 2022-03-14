@@ -4,7 +4,6 @@ print("\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Don't forget to run GUI tests (see
 
 main_tests = [
 
-    "python -m pytest -v -p no:warnings ./test_tables.py >./test_tables_log.log",
     "python -m pytest -v -p no:warnings ./test_events.py >./test_events_log.log",
     "python -m pytest -v -p no:warnings ./test_core_analysis_methods.py >./test_core_analysis_methods_log.log",
     "python -m pytest -v -p no:warnings ./test_main_plot.py >./test_main_plot_log.log",
@@ -24,9 +23,9 @@ main_tests = [
     "python -m pytest -v -p no:warnings ./test_data_tools.py >./test_data_tools_log.log",
     "python -m pytest -v -p no:warnings ./test_events_voltage_calc.py >./test_events_voltage_calc.log",
     "python -m pytest -v -p no:warnings ./test_events_and_analysis_frequency_data.py >./test_events_and_analysis_frequency_data.log",
-    "python -m pytest -v -p no:warnings ./test_curve_fitting.py >./test_curve_fitting_log.log",
     "python -m pytest -v -p no:warnings ./test_backup_options.py >./test_backup_options_log.log",
-
+    "python -m pytest -v -p no:warnings ./test_tables.py >./test_tables_log.log",
+    "python -m pytest -v -p no:warnings ./test_curve_fitting.py >./test_curve_fitting_log.log",
 ]
 
 for test in main_tests:

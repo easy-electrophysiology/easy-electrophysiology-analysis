@@ -662,9 +662,12 @@ class TestSpikeCountGui:
 
         test_rheobase = self.find_true_rheobase_and_exact_im(tgui, im_ramp_array, test_rheobase_rec, bounds_im=bounds_im)
 
-        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["rheobase"][1],
-                              test_rheobase,
-                              1e-10)
+        try:
+            assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["rheobase"][1],
+                                  test_rheobase,
+                                  1e-10)
+        except:
+            breakpoint()
         assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0]["rheobase"][1],
                               test_rheobase,
                               1e-10)

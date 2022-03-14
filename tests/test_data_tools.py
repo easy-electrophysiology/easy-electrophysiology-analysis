@@ -189,9 +189,6 @@ class TestDataToolsGui:
 
         assert dialog.time_method == "cumulative"
 
-        tgui.switch_checkbox(dialog.dia.raw_radiobutton, on=True)
-        assert dialog.time_method == "raw_times"
-
         tgui.switch_checkbox(dialog.dia.normalise_radiobutton, on=True)
         assert dialog.time_method == "normalised"
 
@@ -533,7 +530,6 @@ class TestDataToolsGui:
 
         radiobuttons = {
             "cumulative": dialog.dia.cumulative_radiobutton,
-            "raw_times": dialog.dia.raw_radiobutton,
             "normalised": dialog.dia.normalise_radiobutton,
         }
         tgui.switch_checkbox(radiobuttons[time_method], on=True)
@@ -559,19 +555,6 @@ class TestDataToolsGui:
         assert utils.allclose(0, tgui.mw.loaded_file.data.time_array[:, 0], 1e-10)
 
     @pytest.mark.parametrize("start_stop_times", [[0, "full"], [0, 0.5], [0.05, 0.1], [0.1, 0.5], [0.5, 1], [1, 1.25], [1.5, "full"]])
-    def test_cut_trace_length_on_data_raw_times(self, tgui, start_stop_times):
-        """
-        """
-        init_start_time, init_stop_time = start_stop_times
-        init_stop_time = copy.deepcopy(tgui.mw.loaded_file.data.min_max_time[0][-1]) if init_stop_time == "full" else init_stop_time
-
-        save_fs, save_start_times, new_time, start_time, stop_time = self.setup_and_run_cut_trace_length(tgui, "raw_times", init_start_time, init_stop_time)
-
-        assert utils.allclose(save_fs, tgui.mw.loaded_file.data.fs, 1e-10)
-        assert utils.allclose(save_start_times + stop_time - tgui.mw.loaded_file.data.ts, tgui.mw.loaded_file.data.time_array[:, -1], 1e-10)
-        assert utils.allclose(save_start_times + start_time, tgui.mw.loaded_file.data.time_array[:, 0], 1e-10)
-
-    @pytest.mark.parametrize("start_stop_times", [[0, "full"], [0, 0.5], [0.05, 0.1], [0.1, 0.5], [0.5, 1], [1, 1.25], [1.5, "full"]])
     def test_cut_trace_length_on_data_cumulative(self, tgui, start_stop_times):
         """
         """
@@ -589,7 +572,7 @@ class TestDataToolsGui:
 
     @pytest.mark.parametrize("start_stop_samples", [[0, 50], [0, 10000], [0, 11131], [1, "full"], [0, "full"], [1000, 2000],
                                                    [1500, 5000], [2500, 5000], [10000, 12500], [12500, 15000], [15000, "full"]])
-    @pytest.mark.parametrize("time_method", ["cumulative", "raw_times", "cumulative"])
+    @pytest.mark.parametrize("time_method", ["cumulative", "cumulative"])
     def test_cut_trace_length_sample(self, tgui, start_stop_samples, time_method):
 
         saved_vm_array = copy.deepcopy(tgui.mw.loaded_file.data.vm_array)
@@ -628,9 +611,6 @@ class TestDataToolsGui:
 
         if time_method == "normalised":
             assert np.array_equal(tgui.mw.loaded_file.data.time_array, new_time_array[:, 0:stop_time- start_time])
-
-        elif time_method == "raw_times":
-            assert np.array_equal(tgui.mw.loaded_file.data.time_array, new_time_array[:, start_time:stop_time])
 
         elif time_method == "cumulative":
             stop_time_increasing_array = np.atleast_2d(np.arange(tgui.mw.loaded_file.data.num_recs)).T * (stop_time - start_time)
