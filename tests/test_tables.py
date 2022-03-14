@@ -135,11 +135,11 @@ class TestTables:
                                                self.cf_keys("biexp_decay")])
 
         data_on_table, table_text = self.get_and_cut_col_data_on_table(tgui, file3_start_col, file3_end_col)
-        stored_tabledata, data_text = self.get_curve_fitting_table(tgui, rec_from=0, rec_to=tgui.adata.num_recs-1,
-                                                                   regions=["reg_2", "reg_3", "reg_4"], region_keys=[self.cf_keys("monoexp"),
-                                                                                                                     self.cf_keys("biexp_event"),
-                                                                                                                     self.cf_keys("biexp_decay")],
-                                                                   file_idx=2)
+        stored_tabledata, __ = self.get_curve_fitting_table(tgui, rec_from=0, rec_to=tgui.adata.num_recs-1,
+                                                           regions=["reg_2", "reg_3", "reg_4"], region_keys=[self.cf_keys("monoexp"),
+                                                                                                             self.cf_keys("biexp_event"),
+                                                                                                             self.cf_keys("biexp_decay")],
+                                                           file_idx=2)
 
         assert np.array_equal(data_on_table, stored_tabledata, equal_nan=True)
 
@@ -161,6 +161,7 @@ class TestTables:
                                                                   regions=["reg_5", "reg_6"], region_keys=[self.cf_keys("median"),
                                                                                                            self.cf_keys("triexp")],
                                                             file_idx=3)
+
         assert np.array_equal(data_on_table, stored_tabledata, equal_nan=True)
 
         # File 5, reg_1, reg_2, reg_3, reg_4, reg_5, reg_6, min, median, triexp, biexp_event, mean, biexp_decay -----------------------------------------
@@ -381,7 +382,7 @@ class TestTables:
         assert table.item(12, 0).data(0) == ""
         assert "region" in table.item(13, 0).data(0)
 
-    @pytest.mark.parametrize('region', ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
+    @pytest.mark.parametrize('region', ["reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
     def test_curve_fitting_summary_statisitcs_different_analysis(self, region):
         """
         When the analysis is different for a region, summary statistics cannot be calculated
@@ -398,7 +399,10 @@ class TestTables:
         self.run_default_curve_fitting(tgui, "max", region)
 
         QtCore.QTimer.singleShot(1000, lambda: self.check_sumstat_messagebox_error(tgui))
-        tgui.set_combobox(tgui.mw.mw.curve_fitting_summary_statistics_combobox, idx=int(region[-1]) - 1)
+        if region == "reg_1":
+            tgui.mw.mw.curve_fitting_summary_statistics_combobox.activated.emit(0)  # currentIndexChanged() wont activate as idx is already 0
+        else:
+            tgui.mw.mw.curve_fitting_summary_statistics_combobox.setCurrentIndex(int(region[-1]) - 1)
 
     @pytest.mark.parametrize("region", ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
     @pytest.mark.parametrize("analysis", ["max", "mean", "median", "monoexp", "biexp_decay", "biexp_event", "triexp"])
@@ -415,7 +419,7 @@ class TestTables:
         summary_statistics = self.run_curve_fitting_for_summary_statistics(tgui, region, analysis)  # this will run 4 files
 
         col_keys_union = summary_statistics["file_1"]["col_keys"]
-        self.check_summary_statistics_skinetics(tgui, col_keys_union, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "curve_fitting")
+        self.check_summary_statistics(tgui, col_keys_union, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "curve_fitting")
 
     def run_curve_fitting_for_summary_statistics(self, tgui, region, analysis):
         """
@@ -556,7 +560,8 @@ class TestTables:
         and check the most recently loaded file.
 
         Check the headers are expected. For Events, the columns shown are only the analysed parameters per-file. The optional parameters are fit type and
-        max slope on / off, of which different combinations are tested here.
+        max slope on / off, of which different combinations are tested here. Note that these tests only check the most recently analysed files
+        (unlike row-rise tests which check all plotted files).
 
         The tests work by calculating the start / finish column per file and comparing each file against the stored tabledata individually.
         
@@ -584,7 +589,7 @@ class TestTables:
         summary_statistics["file_1"] = self.check_column_table_against_events(tgui, file1_col_keys, file1_start_col, file1_end_col, file_idx=0,
                                                                               rec_from=0, rec_to=13)
 
-        self.check_summary_statistics_skinetics(tgui, file1_col_keys, summary_statistics, ["file_1"], "events")
+        self.check_summary_statistics(tgui, file1_col_keys, summary_statistics, ["file_1"], "events")
 
         # File 2, max slope on, biexp on --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -599,7 +604,7 @@ class TestTables:
         summary_statistics["file_2"] = self.check_column_table_against_events(tgui, file2_col_keys, file2_start_col, file2_end_col, file_idx=1,
                                                                               rec_from=rec_from, rec_to=rec_to)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2"], "events")
+        self.check_summary_statistics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2"], "events")
 
         # File 3, ma slope on, no fit --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -614,7 +619,7 @@ class TestTables:
         summary_statistics["file_3"] = self.check_column_table_against_events(tgui, file3_col_keys, file3_start_col, file3_end_col, file_idx=2,
                                                                               rec_from=0, rec_to=13)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3"], "events")
+        self.check_summary_statistics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3"], "events")
 
         # File 4, max slope off, biexp on --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -629,7 +634,7 @@ class TestTables:
         summary_statistics["file_4"] = self.check_column_table_against_events(tgui, file4_col_keys, file4_start_col, file4_end_col, file_idx=3,
                                                                               rec_from=0, rec_to=0)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "events")
+        self.check_summary_statistics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "events")
 
         # File 5, max slope on, monoexp on --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -644,7 +649,7 @@ class TestTables:
         summary_statistics["file_5"] = self.check_column_table_against_events(tgui, file5_col_keys, file5_start_col, file5_end_col, file_idx=4,
                                                                               rec_from=rec_from, rec_to=rec_to)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "events")
+        self.check_summary_statistics(tgui, summary_stats_headers, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "events")
 
     def test_events_per_row_table(self):
         """
@@ -855,12 +860,12 @@ class TestTables:
         data_on_table, text = self.get_table(tgui, row_start=file_row_start, row_end=file_row_end, col_start=1, col_end=tgui.mw.mw.table_tab_tablewidget.columnCount())
 
         stored_tabledata = tgui.mw.stored_tabledata.event_info[file_idx]
-        skinetics_data = tgui.reshape_events_into_table(stored_tabledata)
+        events_data = tgui.reshape_events_into_table(stored_tabledata)
 
         if file_idx == 0 and data_on_table.shape[1] != 23:
-            skinetics_data = np.delete(skinetics_data, (12, 13, 22, 21, 20, 19, 18), axis=1)
+            events_data = np.delete(events_data, (12, 13, 22, 21, 20, 19, 18), axis=1)  # delete unanalysed cols
 
-        assert np.array_equal(data_on_table, skinetics_data, equal_nan=True), "row events idx: {0}".format(file_idx)
+        assert np.array_equal(data_on_table, events_data, equal_nan=True), "row events idx: {0}".format(file_idx)
         assert np.min(data_on_table[:, 2]) == rec_from + 1, "row rec_from events idx: {0}".format(file_idx)
         assert np.max(data_on_table[:, 2]) == rec_to + 1, "row rec_to events idx: {0}".format(file_idx)
 
@@ -886,6 +891,8 @@ class TestTables:
     def test_skinetics_per_column_table(self):
         """
         See test_events_per_column_table()
+
+        TODO: this test runs very slowly because there are 75 recs, each with many spikes. Reduce number of recs for this test.
         """
         tgui = SpkcntTGui()
         tgui.mw.mw.actionBatch_Mode_ON.trigger()
@@ -904,7 +911,7 @@ class TestTables:
         self.check_skinetics_column_table(tgui, ["1"], file1_col_keys, file1_start_col, file1_end_col, summary_statistics,
                                           rec_to=rec_to, rec_from=rec_from)
 
-        self.check_summary_statistics_skinetics(tgui, file1_col_keys, summary_statistics, ["file_1"], "skinetics")
+        self.check_summary_statistics(tgui, file1_col_keys, summary_statistics, ["file_1"], "skinetics")
 
         # File 2 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -919,7 +926,7 @@ class TestTables:
         self.check_skinetics_column_table(tgui, ["2"], file2_col_keys, file2_start_col, file2_end_col, summary_statistics,
                                           rec_to=rec_to, rec_from=rec_from)
 
-        self.check_summary_statistics_skinetics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2"], "skinetics")
+        self.check_summary_statistics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2"], "skinetics")
 
         # File 3 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -933,7 +940,7 @@ class TestTables:
 
         self.check_skinetics_column_table(tgui, ["3"], file3_col_keys, file3_start_col, file3_end_col, summary_statistics)
 
-        self.check_summary_statistics_skinetics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "skinetics")
+        self.check_summary_statistics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "skinetics")
 
         # File 4 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -947,7 +954,7 @@ class TestTables:
 
         self.check_skinetics_column_table(tgui, ["4"], file4_col_keys, file4_start_col, file4_end_col, summary_statistics)
 
-        self.check_summary_statistics_skinetics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "skinetics")
+        self.check_summary_statistics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "skinetics")
 
         # File 5 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -961,7 +968,7 @@ class TestTables:
 
         self.check_skinetics_column_table(tgui, ["5"], file5_col_keys, file5_start_col, file5_end_col, summary_statistics, rec_to=rec_to, rec_from=rec_from)
 
-        self.check_summary_statistics_skinetics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5" ], "skinetics")
+        self.check_summary_statistics(tgui, file2_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5" ], "skinetics")
 
     def test_skinetics_per_row_table(self):
         """
@@ -1144,12 +1151,13 @@ class TestTables:
         assert np.max(data_on_table[:, 0]) == rec_to + 1, "rec_to skinetics idx: " + idx
 
         # Summary Statistics
-        num_recs = rec_to - rec_from if rec_from == 0 else rec_to - rec_from + 1  # account for difference when analyse-specific-recs on / off
+        num_recs = rec_to - rec_from + 1  # account for difference when analyse-specific-recs on / off
+        alt_num_recs = len(np.unique(data_on_table[:, 0]))
 
         summary_statistics = {"data": {}, "col_keys": file_col_keys, "file_filename": tgui.fake_filename,
                               "rec_from": rec_from, "rec_to": rec_to, "num_recs": num_recs}
 
-        summary_statistics = self.make_summary_statistics_from_column_data(data_on_table, summary_statistics, file_col_keys, rec_from, rec_to, num_recs + 1, record_col_idx=0)
+        summary_statistics = self.make_summary_statistics_from_column_data(data_on_table, summary_statistics, file_col_keys, rec_from, rec_to, alt_num_recs, record_col_idx=0)
 
         return summary_statistics
 
@@ -1187,7 +1195,7 @@ class TestTables:
         data_on_table, text = self.get_table(tgui, row_start=file_row_start, row_end=file_row_end, col_start=1, col_end=tgui.mw.mw.table_tab_tablewidget.columnCount())
 
         stored_tabledata = tgui.mw.stored_tabledata.skinetics_data[file_idx]
-        stored_tabledata = tgui.reshape_stored_tabledata_into_table(stored_tabledata)
+        stored_tabledata = tgui.reshape_skinetics_data_into_table(stored_tabledata)
 
         if not max_slope:
             stored_tabledata = stored_tabledata[:, :-2]
@@ -1220,7 +1228,7 @@ class TestTables:
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["1"], file1_col_keys, file1_start_col, file1_end_col, summary_statistics, analysis_type="Ri")
 
-        self.check_summary_statistics_skinetics(tgui, file1_col_keys, summary_statistics, ["file_1"], "Ri")
+        self.check_summary_statistics(tgui, file1_col_keys, summary_statistics, ["file_1"], "Ri")
 
         # File 2 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1235,7 +1243,7 @@ class TestTables:
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["2"], file2_col_keys, file2_start_col, file2_end_col, summary_statistics, analysis_type="Ri", rec_to=rec_to, rec_from=rec_from)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2"], "Ri")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2"], "Ri")
 
         # File 3 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1249,7 +1257,7 @@ class TestTables:
         assert file3_col_keys == ['record_num', 'im_baseline', 'im_steady_state', 'im_delta', 'vm_baseline', 'vm_steady_state', 'vm_delta', 'input_resistance', 'sag_hump_peaks', 'sag_hump_ratio']
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["3"], file3_col_keys, file3_start_col, file3_end_col, summary_statistics, analysis_type="Ri")
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "Ri")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "Ri")
 
         # File 4 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1263,7 +1271,7 @@ class TestTables:
         assert file4_col_keys == ['record_num', 'user_input_im', 'vm_baseline', 'vm_steady_state', 'vm_delta', 'input_resistance', 'sag_hump_peaks', 'sag_hump_ratio']
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["4"], file4_col_keys, file4_start_col, file4_end_col, summary_statistics, analysis_type="Ri", rec_to=rec_to, rec_from=rec_from)
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "Ri")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "Ri")
 
         # File 5 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1277,7 +1285,7 @@ class TestTables:
         assert file5_col_keys == ['record_num', 'im_baseline', 'im_steady_state', 'im_delta', 'vm_baseline', 'vm_steady_state', 'vm_delta', 'input_resistance', 'sag_hump_peaks', 'sag_hump_ratio']
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["5"], file5_col_keys, file5_start_col, file5_end_col, summary_statistics, analysis_type="Ri")
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "Ri")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "Ri")
 
     def test_input_resistance_per_row_table(self):
         """
@@ -1437,7 +1445,7 @@ class TestTables:
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["1"], file1_col_keys, file1_start_col, file1_end_col, summary_statistics)
 
-        self.check_summary_statistics_skinetics(tgui, file1_col_keys, summary_statistics, ["file_1"], "spkcnt")
+        self.check_summary_statistics(tgui, file1_col_keys, summary_statistics, ["file_1"], "spkcnt")
 
         # File 2 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1452,7 +1460,7 @@ class TestTables:
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["2"], file2_col_keys, file2_start_col, file2_end_col, summary_statistics, rec_to=rec_to, rec_from=rec_from)
 
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2"], "spkcnt")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2"], "spkcnt")
 
         # File 3 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1466,7 +1474,7 @@ class TestTables:
         assert file3_col_keys == ["record_num", "num_spikes", "im_baseline", "im_steady_state", "im_delta", "rheobase", "fs_latency_ms", "mean_isi_ms", "spike_fa_divisor", "spike_fa_local_variance"]
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["3"], file3_col_keys, file3_start_col, file3_end_col, summary_statistics)
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "spkcnt")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3"], "spkcnt")
 
         # File 4 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1480,7 +1488,7 @@ class TestTables:
         assert file4_col_keys == ["record_num", "num_spikes", "im_baseline", "im_steady_state", "im_delta", "rheobase", "fs_latency_ms", "mean_isi_ms", "spike_fa_divisor", "spike_fa_local_variance"]
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["4"], file4_col_keys, file4_start_col, file4_end_col, summary_statistics, rec_to=rec_to, rec_from=rec_from)
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "spkcnt")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4"], "spkcnt")
 
         # File 5 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1494,7 +1502,7 @@ class TestTables:
         assert file5_col_keys == ["record_num", "num_spikes", "user_input_im", "rheobase", "fs_latency_ms", "mean_isi_ms", "spike_fa_divisor", "spike_fa_local_variance"]
 
         self.check_spkcnt_or_input_resistance_column_table(tgui, ["5"], file5_col_keys, file5_start_col, file5_end_col, summary_statistics)
-        self.check_summary_statistics_skinetics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "spkcnt")
+        self.check_summary_statistics(tgui, summary_stats_col_keys, summary_statistics, ["file_1", "file_2", "file_3", "file_4", "file_5"], "spkcnt")
 
     def test_spkcnt_per_row_table(self):
         """
@@ -1796,7 +1804,7 @@ class TestTables:
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # Not these are shared across all analysis types
 
-    def check_summary_statistics_skinetics(self, tgui, col_keys_union, summary_statistics, file_nums, analysis_type):
+    def check_summary_statistics(self, tgui, col_keys_union, summary_statistics, file_nums, analysis_type):
         """
         Check summary statistics shown on the results table. Do this for average across and within all recs,
         and check every combination of M, SD, SE.
@@ -1850,7 +1858,7 @@ class TestTables:
 
         self.get_compare_function_and_switch_checkbox(tgui, analysis_type, on=False)
 
-    def check_skinetics_events_summary_stats_row(self, tgui, summary_statistics, col_keys_union, row, parameters, file_num, rec_mode_idx=None):
+    def check_skinetics_events__cf_summary_stats_row(self, tgui, summary_statistics, col_keys_union, row, parameters, file_num, rec_mode_idx=None):
         """
         """
         table = tgui.mw.mw.table_tab_tablewidget
@@ -1916,7 +1924,7 @@ class TestTables:
 
             for parameter in parameters:
 
-                assert table.item(1, start_col).data(0).strip() == parameterm, "param failed {0} {1}".format(col_key, parameter)
+                assert table.item(1, start_col).data(0).strip() == parameter, "param failed {0} {1}".format(col_key, parameter)
 
                 if rec_mode_idx is not None:
                     self.check_spkcnt_summary_statistics_average_within_recs(table, col_key, row, start_col, sum_stat_data, parameter, rec_mode_idx)
@@ -2216,7 +2224,7 @@ class TestTables:
             if analysis_type in ["spkcnt", "Ri"]:
                 return self.check_spkcnt_ri_summary_stats_row  # RENAME
             else:
-                return self.check_skinetics_events_summary_stats_row
+                return self.check_skinetics_events__cf_summary_stats_row
 
     def get_filenames_col(self, tgui, file_row_start, file_row_end, filename_col=0):
         """

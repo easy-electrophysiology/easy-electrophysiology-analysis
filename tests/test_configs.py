@@ -20,6 +20,7 @@ from ephys_data_methods import core_analysis_methods, event_analysis_master
 from ephys_data_methods_private import curve_fitting_master
 from easy_electrophysiology.easy_electrophysiology.easy_electrophysiology import MainWindow
 from utils import utils
+keyPress = QTest.keyPress
 keyClick = QTest.keyClick
 keyClicks = QTest.keyClicks
 from setup_test_suite import GuiTestSetup
@@ -4695,326 +4696,368 @@ class TestConfigs:
     def test_threshold_lower_combobox_and_widgets(self, tgui, dialog_type, combobox_idx_name):
         """
         """
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
-        idx, text_ = combobox_idx_name
+        def wrap_to_avoid_pytest_seg_fault(tgui, dialog_type, combobox_idx_name):
 
-        tgui.set_combobox(dialog.dia.threshold_lower_combobox,
-                          idx)
-        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox,
-                                       idx + 1)
-        tgui.switch_checkbox(dialog.dia.hide_threshold_lower_from_plot_checkbox,
-                             on=True)
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+            idx, text_ = combobox_idx_name
 
-        if idx == 3:
-            text_ = "RMS of mean" if dialog_type == "refine" else "RMS of baseline"
+            tgui.set_combobox(dialog.dia.threshold_lower_combobox,
+                              idx)
+            tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox,
+                                           idx + 1)
+            tgui.switch_checkbox(dialog.dia.hide_threshold_lower_from_plot_checkbox,
+                                 on=True)
 
-        assert dialog.dia.threshold_lower_combobox.currentIndex() == idx
-        assert dialog.dia.threshold_lower_combobox.currentText() == text_
-        assert dialog.dia.hide_threshold_lower_from_plot_checkbox.isChecked()
-        assert not tgui.mw.cfgs.events["show_threshold_lower_on_plot"]
-        self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
+            if idx == 3:
+                text_ = "RMS of mean" if dialog_type == "refine" else "RMS of baseline"
 
-        tgui.switch_checkbox(dialog.dia.hide_threshold_lower_from_plot_checkbox,
-                             on=False)
+            assert dialog.dia.threshold_lower_combobox.currentIndex() == idx
+            assert dialog.dia.threshold_lower_combobox.currentText() == text_
+            assert dialog.dia.hide_threshold_lower_from_plot_checkbox.isChecked()
+            assert not tgui.mw.cfgs.events["show_threshold_lower_on_plot"]
+            self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
 
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+            tgui.switch_checkbox(dialog.dia.hide_threshold_lower_from_plot_checkbox,
+                                 on=False)
 
-        assert dialog.dia.threshold_lower_combobox.currentIndex() == idx
-        assert dialog.dia.threshold_lower_combobox.currentText() == text_
-        assert not dialog.dia.hide_threshold_lower_from_plot_checkbox.isChecked()
-        assert tgui.mw.cfgs.events["show_threshold_lower_on_plot"]
-        self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
 
-        tgui.set_combobox(dialog.dia.threshold_lower_combobox, idx)
-        self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
+            assert dialog.dia.threshold_lower_combobox.currentIndex() == idx
+            assert dialog.dia.threshold_lower_combobox.currentText() == text_
+            assert not dialog.dia.hide_threshold_lower_from_plot_checkbox.isChecked()
+            assert tgui.mw.cfgs.events["show_threshold_lower_on_plot"]
+            self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
 
-        tgui.shutdown()
+            tgui.set_combobox(dialog.dia.threshold_lower_combobox, idx)
+            self.check_threshold_lower_spinbox(text_, dialog, idx, tgui)
+
+            tgui.shutdown()
+        wrap_to_avoid_pytest_seg_fault(tgui, dialog_type, combobox_idx_name)
 
     def test_deconvolution_options_dialog_widgets(self, tgui):
-        dialog, config_dict = self.setup_events_with_dialog(tgui, "refine")
 
-        tgui.set_combobox(dialog.dia.detection_cutoff_combobox, 2)
-        tgui.left_mouse_click(dialog.dia.deconvolution_options_button)
+        def wrap_to_avoid_pytest_seg_fault(tgui):
+            dialog, config_dict = self.setup_events_with_dialog(tgui, "refine")
 
-        tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.low_filter_cutoff_spinbox, 55)
-        tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.high_filter_cutoff_spinbox, 155)
-        tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.standard_deviation_spinbox, 5.5)
+            tgui.set_combobox(dialog.dia.detection_cutoff_combobox, 2)
+            tgui.left_mouse_click(dialog.dia.deconvolution_options_button)
 
-        assert config_dict["deconv_options"]["filt_low_hz"] == 55  # detection_threshold is tested on test_events.py
-        assert config_dict["deconv_options"]["filt_high_hz"] == 155
-        assert config_dict["deconv_options"]["n_times_std"] == 5.5
+            tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.low_filter_cutoff_spinbox, 55)
+            tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.high_filter_cutoff_spinbox, 155)
+            tgui.enter_number_into_spinbox(dialog.deconvolution_options_dialog.dia.standard_deviation_spinbox, 5.5)
 
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_refine")
-        dialog, config_dict = self.setup_events_with_dialog(tgui, "refine")
+            assert config_dict["deconv_options"]["filt_low_hz"] == 55  # detection_threshold is tested on test_events.py
+            assert config_dict["deconv_options"]["filt_high_hz"] == 155
+            assert config_dict["deconv_options"]["n_times_std"] == 5.5
 
-        tgui.set_combobox(dialog.dia.detection_cutoff_combobox, 2)
-        tgui.left_mouse_click(dialog.dia.deconvolution_options_button)
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_refine")
+            dialog, config_dict = self.setup_events_with_dialog(tgui, "refine")
 
-        assert dialog.deconvolution_options_dialog.dia.low_filter_cutoff_spinbox.value() == 55
-        assert dialog.deconvolution_options_dialog.dia.high_filter_cutoff_spinbox.value() == 155
-        assert dialog.deconvolution_options_dialog.dia.standard_deviation_spinbox.value() == 5.5
+            tgui.set_combobox(dialog.dia.detection_cutoff_combobox, 2)
+            tgui.left_mouse_click(dialog.dia.deconvolution_options_button)
 
-        assert config_dict["deconv_options"]["filt_low_hz"] == 55  # detection_threshold is tested on test_events.py
-        assert config_dict["deconv_options"]["filt_high_hz"] == 155
-        assert config_dict["deconv_options"]["n_times_std"] == 5.5
+            assert dialog.deconvolution_options_dialog.dia.low_filter_cutoff_spinbox.value() == 55
+            assert dialog.deconvolution_options_dialog.dia.high_filter_cutoff_spinbox.value() == 155
+            assert dialog.deconvolution_options_dialog.dia.standard_deviation_spinbox.value() == 5.5
 
-        tgui.shutdown()
+            assert config_dict["deconv_options"]["filt_low_hz"] == 55  # detection_threshold is tested on test_events.py
+            assert config_dict["deconv_options"]["filt_high_hz"] == 155
+            assert config_dict["deconv_options"]["n_times_std"] == 5.5
+
+            tgui.shutdown()
+        wrap_to_avoid_pytest_seg_fault(tgui)
 
     @pytest.mark.parametrize("fit_type", ["monoexp", "biexp"])
     def test_decay_fit_type_widgets(self, tgui,
                                     fit_type):
 
-        dialog, config_dict = self.setup_events_with_dialog(tgui,
-                                                            dialog_type="misc_options")
-        key = fit_type + "_fit"
+        def wrap_to_avoid_pytest_seg_fault(tgui, fit_type):
 
-        combobox_idx = 0 if fit_type == "monoexp" else 1
-        tgui.set_combobox(dialog.dia.event_fit_method_combobox, combobox_idx)
-        assert config_dict["decay_or_biexp_fit_method"] == fit_type
+            dialog, config_dict = self.setup_events_with_dialog(tgui,
+                                                                dialog_type="misc_options")
+            key = fit_type + "_fit"
 
-        tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_checkbox"),
-                             on=True)
-        assert config_dict[key]["exclude_from_r2_on"] is True
-        tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_spinbox"),
-                                       0.25)
-        assert config_dict[key]["exclude_from_r2_value"] == 0.25
+            combobox_idx = 0 if fit_type == "monoexp" else 1
+            tgui.set_combobox(dialog.dia.event_fit_method_combobox, combobox_idx)
+            assert config_dict["decay_or_biexp_fit_method"] == fit_type
 
-        tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox"),
-                             on=True)
-        assert config_dict[key]["adjust_startpoint_r2_on"] is True
-
-        tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox"),
-                                       35)
-        assert config_dict[key]["adjust_startpoint_r2_value"] == 35
-
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
-        dialog, config_dict = self.setup_events_with_dialog(tgui,
-                                                            dialog_type="misc_options")
-        # Reopen and check
-        assert dialog.dia.event_fit_method_combobox.currentIndex() == combobox_idx
-        assert config_dict["decay_or_biexp_fit_method"] == fit_type
-
-        assert self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_checkbox").isChecked()
-        assert config_dict[key]["exclude_from_r2_on"] is True
-
-        assert self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_spinbox").value() == 0.25
-        assert config_dict[key]["exclude_from_r2_value"] == 0.25
-
-        assert self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox").isChecked()
-        assert config_dict[key]["adjust_startpoint_r2_on"] is True
-
-        assert self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox").value() == 35
-        assert config_dict[key]["adjust_startpoint_r2_value"] == 35
-
-        tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_checkbox"),
-                             # switching this on turns adjust_startpoint_r2_on off
-                             on=True)
-        assert config_dict[key]["adjust_startpoint_bounds_on"] is True
-        assert not self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox").isChecked()
-        assert not self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox").isEnabled()
-
-        tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_spinbox"),
-                                       45)
-        assert config_dict[key]["adjust_startpoint_bounds_value"] == 45
-
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
-        dialog, config_dict = self.setup_events_with_dialog(tgui,
-                                                            dialog_type="misc_options")
-
-        assert self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_checkbox").isChecked()
-        assert config_dict[key]["adjust_startpoint_bounds_on"] is True
-        assert self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_spinbox").value() == 45
-        assert config_dict[key]["adjust_startpoint_bounds_value"] == 45
-
-        if fit_type == "monoexp":  # messy, but cannot split into function or get access violation that shutdown() does not fix
-            tgui.switch_checkbox(dialog.dia.monoexp_exclude_outside_of_bounds_checkbox,  # switching this turns off adjust_startpoint_bounds_on
+            tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_checkbox"),
                                  on=True)
-            assert config_dict["monoexp_fit"]["exclude_if_params_not_in_bounds"] is True
-            assert not dialog.dia.monoexp_adjust_start_point_for_bounds_checkbox.isChecked()
-            assert not dialog.dia.monoexp_adjust_start_point_for_bounds_spinbox.isEnabled()
+            assert config_dict[key]["exclude_from_r2_on"] is True
+            tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_spinbox"),
+                                           0.25)
+            assert config_dict[key]["exclude_from_r2_value"] == 0.25
 
-            tgui.enter_number_into_spinbox(dialog.dia.monoexp_min_tau_spinbox,
-                                           55)
-            assert config_dict["monoexp_fit"]["tau_cutoff_min"] == 55
-            tgui.enter_number_into_spinbox(dialog.dia.monoexp_max_tau_spinbox,
-                                           65)
-            assert config_dict["monoexp_fit"]["tau_cutoff_max"] == 65
+            tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox"),
+                                 on=True)
+            assert config_dict[key]["adjust_startpoint_r2_on"] is True
+
+            tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox"),
+                                           35)
+            assert config_dict[key]["adjust_startpoint_r2_value"] == 35
+
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
+            dialog, config_dict = self.setup_events_with_dialog(tgui,
+                                                                dialog_type="misc_options")
+            # Reopen and check
+            assert dialog.dia.event_fit_method_combobox.currentIndex() == combobox_idx
+            assert config_dict["decay_or_biexp_fit_method"] == fit_type
+
+            assert self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_checkbox").isChecked()
+            assert config_dict[key]["exclude_from_r2_on"] is True
+
+            assert self.misc_event_widgets(dialog, fit_type, "fit_exclude_r2_spinbox").value() == 0.25
+            assert config_dict[key]["exclude_from_r2_value"] == 0.25
+
+            assert self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox").isChecked()
+            assert config_dict[key]["adjust_startpoint_r2_on"] is True
+
+            assert self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox").value() == 35
+            assert config_dict[key]["adjust_startpoint_r2_value"] == 35
+
+            tgui.switch_checkbox(self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_checkbox"),
+                                 # switching this on turns adjust_startpoint_r2_on off
+                                 on=True)
+            assert config_dict[key]["adjust_startpoint_bounds_on"] is True
+            assert not self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_checkbox").isChecked()
+            assert not self.misc_event_widgets(dialog, fit_type, "fit_adjust_start_point_spinbox").isEnabled()
+
+            tgui.enter_number_into_spinbox(self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_spinbox"),
+                                           45)
+            assert config_dict[key]["adjust_startpoint_bounds_value"] == 45
 
             tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
             dialog, config_dict = self.setup_events_with_dialog(tgui,
                                                                 dialog_type="misc_options")
 
-            assert dialog.dia.monoexp_exclude_outside_of_bounds_checkbox.isChecked()
-            assert config_dict["monoexp_fit"]["exclude_if_params_not_in_bounds"] is True
+            assert self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_checkbox").isChecked()
+            assert config_dict[key]["adjust_startpoint_bounds_on"] is True
+            assert self.misc_event_widgets(dialog, fit_type, "adjust_start_point_for_bounds_spinbox").value() == 45
+            assert config_dict[key]["adjust_startpoint_bounds_value"] == 45
 
-            assert dialog.dia.monoexp_min_tau_spinbox.value() == 55
-            assert config_dict["monoexp_fit"]["tau_cutoff_min"] == 55
-            assert dialog.dia.monoexp_max_tau_spinbox.value() == 65
-            assert config_dict["monoexp_fit"]["tau_cutoff_max"] == 65
+            if fit_type == "monoexp":  # messy, but cannot split into function or get access violation that shutdown() does not fix
+                tgui.switch_checkbox(dialog.dia.monoexp_exclude_outside_of_bounds_checkbox,  # switching this turns off adjust_startpoint_bounds_on
+                                     on=True)
+                assert config_dict["monoexp_fit"]["exclude_if_params_not_in_bounds"] is True
+                assert not dialog.dia.monoexp_adjust_start_point_for_bounds_checkbox.isChecked()
+                assert not dialog.dia.monoexp_adjust_start_point_for_bounds_spinbox.isEnabled()
 
-        elif fit_type == "biexp":
-            tgui.switch_checkbox(dialog.dia.biexp_exclude_outside_of_bounds_checkbox,
-                                 on=True)
-            assert config_dict["biexp_fit"]["exclude_if_params_not_in_bounds"] is True
-            assert not dialog.dia.biexp_adjust_start_point_for_bounds_checkbox.isChecked()
-            assert not dialog.dia.biexp_adjust_start_point_for_bounds_spinbox.isEnabled()
+                tgui.enter_number_into_spinbox(dialog.dia.monoexp_min_tau_spinbox,
+                                               55)
+                assert config_dict["monoexp_fit"]["tau_cutoff_min"] == 55
+                tgui.enter_number_into_spinbox(dialog.dia.monoexp_max_tau_spinbox,
+                                               65)
+                assert config_dict["monoexp_fit"]["tau_cutoff_max"] == 65
 
-            tgui.enter_number_into_spinbox(dialog.dia.biexp_min_rise_spinbox, 55)
-            assert config_dict["biexp_fit"]["rise_cutoff_min"] == 55
+                tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
+                dialog, config_dict = self.setup_events_with_dialog(tgui,
+                                                                    dialog_type="misc_options")
 
-            tgui.enter_number_into_spinbox(dialog.dia.biexp_min_decay_spinbox, 65)
-            assert config_dict["biexp_fit"]["decay_cutoff_min"] == 65
+                assert dialog.dia.monoexp_exclude_outside_of_bounds_checkbox.isChecked()
+                assert config_dict["monoexp_fit"]["exclude_if_params_not_in_bounds"] is True
 
-            tgui.enter_number_into_spinbox(dialog.dia.biexp_max_rise_spinbox, 75)
-            assert config_dict["biexp_fit"]["rise_cutoff_max"] == 75
+                assert dialog.dia.monoexp_min_tau_spinbox.value() == 55
+                assert config_dict["monoexp_fit"]["tau_cutoff_min"] == 55
+                assert dialog.dia.monoexp_max_tau_spinbox.value() == 65
+                assert config_dict["monoexp_fit"]["tau_cutoff_max"] == 65
 
-            tgui.enter_number_into_spinbox(dialog.dia.biexp_max_decay_spinbox, 85)
-            assert config_dict["biexp_fit"]["decay_cutoff_max"] == 85
+            elif fit_type == "biexp":
+                tgui.switch_checkbox(dialog.dia.biexp_exclude_outside_of_bounds_checkbox,
+                                     on=True)
+                assert config_dict["biexp_fit"]["exclude_if_params_not_in_bounds"] is True
+                assert not dialog.dia.biexp_adjust_start_point_for_bounds_checkbox.isChecked()
+                assert not dialog.dia.biexp_adjust_start_point_for_bounds_spinbox.isEnabled()
 
-            tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
-            dialog, config_dict = self.setup_events_with_dialog(tgui,
-                                                                dialog_type="misc_options")
+                tgui.enter_number_into_spinbox(dialog.dia.biexp_min_rise_spinbox, 55)
+                assert config_dict["biexp_fit"]["rise_cutoff_min"] == 55
 
-            assert dialog.dia.biexp_exclude_outside_of_bounds_checkbox.isChecked()
-            assert config_dict["biexp_fit"]["exclude_if_params_not_in_bounds"] is True
+                tgui.enter_number_into_spinbox(dialog.dia.biexp_min_decay_spinbox, 65)
+                assert config_dict["biexp_fit"]["decay_cutoff_min"] == 65
 
-            assert dialog.dia.biexp_min_rise_spinbox.value() == 55
-            assert config_dict["biexp_fit"]["rise_cutoff_min"] == 55
+                tgui.enter_number_into_spinbox(dialog.dia.biexp_max_rise_spinbox, 75)
+                assert config_dict["biexp_fit"]["rise_cutoff_max"] == 75
 
-            assert dialog.dia.biexp_min_decay_spinbox.value() == 65
-            assert config_dict["biexp_fit"]["decay_cutoff_min"] == 65
+                tgui.enter_number_into_spinbox(dialog.dia.biexp_max_decay_spinbox, 85)
+                assert config_dict["biexp_fit"]["decay_cutoff_max"] == 85
 
-            assert dialog.dia.biexp_max_rise_spinbox.value() == 75
-            assert config_dict["biexp_fit"]["rise_cutoff_max"] == 75
+                tgui = close_and_reload_for_defaults_check(tgui, save_="events_misc_options")
+                dialog, config_dict = self.setup_events_with_dialog(tgui,
+                                                                    dialog_type="misc_options")
 
-            assert dialog.dia.biexp_max_decay_spinbox.value() == 85
-            assert config_dict["biexp_fit"]["decay_cutoff_max"] == 85
+                assert dialog.dia.biexp_exclude_outside_of_bounds_checkbox.isChecked()
+                assert config_dict["biexp_fit"]["exclude_if_params_not_in_bounds"] is True
 
-        tgui.shutdown()
+                assert dialog.dia.biexp_min_rise_spinbox.value() == 55
+                assert config_dict["biexp_fit"]["rise_cutoff_min"] == 55
+
+                assert dialog.dia.biexp_min_decay_spinbox.value() == 65
+                assert config_dict["biexp_fit"]["decay_cutoff_min"] == 65
+
+                assert dialog.dia.biexp_max_rise_spinbox.value() == 75
+                assert config_dict["biexp_fit"]["rise_cutoff_max"] == 75
+
+                assert dialog.dia.biexp_max_decay_spinbox.value() == 85
+                assert config_dict["biexp_fit"]["decay_cutoff_max"] == 85
+
+            tgui.shutdown()
+
+        wrap_to_avoid_pytest_seg_fault(tgui, fit_type)
 
     @pytest.mark.parametrize("template", ["1", "2", "3"])
     def test_events_generate_configs(self, tgui, template):
-        dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
 
-        offset = int(template)
+        def wrap_to_avoid_pytest_seg_fault(tgui, template):
+            dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
 
-        dialog.dia.choose_template_combobox.setCurrentIndex(int(template) - 1)
+            offset = int(template)
 
-        self.set_template_generate(tgui, dialog, b0=900 + offset)
-        assert tgui.mw.cfgs.events["templates"][template]["b0_ms"] == 900 + offset
+            dialog.dia.choose_template_combobox.setCurrentIndex(int(template) - 1)
 
-        self.set_template_generate(tgui, dialog, b1=-900 + offset)
-        assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == -900 + offset
+            self.set_template_generate(tgui, dialog, b0=900 + offset)
+            assert tgui.mw.cfgs.events["templates"][template]["b0_ms"] == 900 + offset
 
-        self.set_template_generate(tgui, dialog, rise=10 + offset)
-        assert np.isclose(tgui.mw.cfgs.events["templates"][template]["rise_s"],
-                          0.010 + (offset / 1000))
+            self.set_template_generate(tgui, dialog, b1=-900 + offset)
+            assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == -900 + offset
 
-        self.set_template_generate(tgui, dialog, decay=100 + offset)
-        assert np.isclose(tgui.mw.cfgs.events["templates"][template]["decay_s"],
-                          0.100 + (offset / 1000))  # annoying rounding issue
+            self.set_template_generate(tgui, dialog, rise=10 + offset)
+            assert np.isclose(tgui.mw.cfgs.events["templates"][template]["rise_s"],
+                              0.010 + (offset / 1000))
 
-        self.set_template_generate(tgui, dialog, width=500 + offset)
-        assert config_dict["templates"][template]["window_len_s"] == 0.5 + (offset / 1000)
-        assert config_dict["templates"][template]["window_len_samples"] == ((0.5 + (offset / 1000)) * tgui.mw.loaded_file.data.fs)
+            self.set_template_generate(tgui, dialog, decay=100 + offset)
+            assert np.isclose(tgui.mw.cfgs.events["templates"][template]["decay_s"],
+                              0.100 + (offset / 1000))  # annoying rounding issue
 
-        tgui.click_checkbox(dialog.dia.event_direction_is_positive_checkbox)
-        assert config_dict["templates"][template]["direction"] == 1
+            self.set_template_generate(tgui, dialog, width=500 + offset)
+            assert config_dict["templates"][template]["window_len_s"] == 0.5 + (offset / 1000)
+            assert config_dict["templates"][template]["window_len_samples"] == ((0.5 + (offset / 1000)) * tgui.mw.loaded_file.data.fs)
 
-        tgui.enter_number_into_spinbox(dialog.dia.b1_spinbox, 900 + offset)
-        assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == 900 + offset
+            tgui.click_checkbox(dialog.dia.event_direction_is_positive_checkbox)
+            assert config_dict["templates"][template]["direction"] == 1
 
-        # Reload and Check
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_generate")
-        dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
+            tgui.enter_number_into_spinbox(dialog.dia.b1_spinbox, 900 + offset)
+            assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == 900 + offset
 
-        assert dialog.dia.b0_spinbox.value() == 900 + offset  
-        assert tgui.mw.cfgs.events["templates"][template]["b0_ms"] == 900 + offset
+            # Reload and Check
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_generate")
+            dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
 
-        assert dialog.dia.b1_spinbox.value() == 900 + offset
-        assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == 900 + offset
+            assert dialog.dia.b0_spinbox.value() == 900 + offset
+            assert tgui.mw.cfgs.events["templates"][template]["b0_ms"] == 900 + offset
 
-        assert dialog.dia.rise_spinbox.value() == 10 + offset
-        assert np.isclose(tgui.mw.cfgs.events["templates"][template]["rise_s"],
-                          0.010 + (offset / 1000))
+            assert dialog.dia.b1_spinbox.value() == 900 + offset
+            assert tgui.mw.cfgs.events["templates"][template]["b1_ms"] == 900 + offset
 
-        assert dialog.dia.decay_spinbox.value() == 100 + offset
-        assert np.isclose(tgui.mw.cfgs.events["templates"][template]["decay_s"],
-                          0.100 + (offset / 1000))
+            assert dialog.dia.rise_spinbox.value() == 10 + offset
+            assert np.isclose(tgui.mw.cfgs.events["templates"][template]["rise_s"],
+                              0.010 + (offset / 1000))
 
-        assert dialog.dia.width_spinbox.value() == 500 + offset
-        assert config_dict["templates"][template]["window_len_s"] == 0.5 + (offset / 1000)
-        assert config_dict["templates"][template]["window_len_samples"] == ((0.5 + (offset / 1000)) * tgui.mw.loaded_file.data.fs)
+            assert dialog.dia.decay_spinbox.value() == 100 + offset
+            assert np.isclose(tgui.mw.cfgs.events["templates"][template]["decay_s"],
+                              0.100 + (offset / 1000))
 
-        assert dialog.dia.event_direction_is_positive_checkbox.isChecked()
-        assert config_dict["templates"][template]["direction"] == 1
+            assert dialog.dia.width_spinbox.value() == 500 + offset
+            assert config_dict["templates"][template]["window_len_s"] == 0.5 + (offset / 1000)
+            assert config_dict["templates"][template]["window_len_samples"] == ((0.5 + (offset / 1000)) * tgui.mw.loaded_file.data.fs)
 
-        # Switch Direction and reload
-        assert not tgui.click_checkbox(dialog.dia.event_direction_is_positive_checkbox)
-        assert config_dict["templates"][template]["direction"] == -1
+            assert dialog.dia.event_direction_is_positive_checkbox.isChecked()
+            assert config_dict["templates"][template]["direction"] == 1
 
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_generate")
-        dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
+            # Switch Direction and reload
+            assert not tgui.click_checkbox(dialog.dia.event_direction_is_positive_checkbox)
+            assert config_dict["templates"][template]["direction"] == -1
 
-        assert not dialog.dia.event_direction_is_positive_checkbox.isChecked()
-        assert config_dict["templates"][template]["direction"] == -1
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_generate")
+            dialog, config_dict = self.setup_events_with_dialog(tgui, "generate")
 
-        tgui.shutdown()
+            assert not dialog.dia.event_direction_is_positive_checkbox.isChecked()
+            assert config_dict["templates"][template]["direction"] == -1
+
+            tgui.shutdown()
+        wrap_to_avoid_pytest_seg_fault(tgui, template)
 
     @pytest.mark.parametrize("dialog_type", ["refine", "analyse", "threshold"])
     @pytest.mark.parametrize("combobox_idx_name", [[0, "Auto."], [1, "Linear"], [2, "Curve"], [3, "Draw"]])
-    def __test_baseline_combobox_and_widgets(self, tgui, dialog_type, combobox_idx_name):
+    def test_baseline_combobox_and_widgets(self, tgui, dialog_type, combobox_idx_name):
         """
         Cannot run the last test for macos due to the weird CPU issues / threading running
         these test on macos. Changing spinbox is not currently updating, either with
         tgui fill function or .setValue. Only works if break in and run processEvents()
         like 10 times - very strange macOS behaviour, or Qt bug.
         """
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
-        idx, text_ = combobox_idx_name
 
-        tgui.set_combobox(dialog.dia.baseline_combobox, idx)
+        def wrap_to_avoid_pytest_seg_fault(tgui, dialog_type, combobox_idx_name):
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+            idx, text_ = combobox_idx_name
 
-        tgui.enter_number_into_spinbox(dialog.dia.baseline_spinbox, idx + 1)
+            tgui.set_combobox(dialog.dia.baseline_combobox, idx)
 
-        if text_ != "Auto.":
-            tgui.switch_checkbox(dialog.dia.hide_baseline_from_plot_checkbox, on=True)
+            tgui.enter_number_into_spinbox(dialog.dia.baseline_spinbox, idx + 1)
 
-        assert dialog.dia.baseline_combobox.currentIndex() == idx
-        assert dialog.dia.baseline_combobox.currentText() == text_
-        self.check_baseline_spinbox(text_, dialog, idx, tgui)
+            if text_ != "Auto.":
+                tgui.switch_checkbox(dialog.dia.hide_baseline_from_plot_checkbox, on=True)
 
-        if text_ != "Auto.":
-            assert dialog.dia.hide_baseline_from_plot_checkbox.isChecked()
-            assert not tgui.mw.cfgs.events["show_baseline_on_plot"]
+            assert dialog.dia.baseline_combobox.currentIndex() == idx
+            assert dialog.dia.baseline_combobox.currentText() == text_
+            self.check_baseline_spinbox(text_, dialog, idx, tgui)
 
-        tgui.switch_checkbox(dialog.dia.hide_baseline_from_plot_checkbox,
-                             on=False)
+            if text_ != "Auto.":
+                assert dialog.dia.hide_baseline_from_plot_checkbox.isChecked()
+                assert not tgui.mw.cfgs.events["show_baseline_on_plot"]
 
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+            tgui.switch_checkbox(dialog.dia.hide_baseline_from_plot_checkbox,
+                                 on=False)
 
-        assert dialog.dia.baseline_combobox.currentIndex() == idx
-        assert tgui.mw.cfgs.events["show_baseline_on_plot"]
-        self.check_baseline_spinbox(text_, dialog, idx, tgui)
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
 
-        if text_ != "Auto.":
-            assert not dialog.dia.hide_baseline_from_plot_checkbox.isChecked()
+            assert dialog.dia.baseline_combobox.currentIndex() == idx
             assert tgui.mw.cfgs.events["show_baseline_on_plot"]
+            self.check_baseline_spinbox(text_, dialog, idx, tgui)
 
-        if platform == "darwin":  # see doc
+            if text_ != "Auto.":
+                assert not dialog.dia.hide_baseline_from_plot_checkbox.isChecked()
+                assert tgui.mw.cfgs.events["show_baseline_on_plot"]
+
+            if platform == "darwin":  # see doc
+                tgui.shutdown()
+                return
+
+            tgui.set_combobox(dialog.dia.baseline_combobox, idx)
+            self.check_baseline_spinbox(text_, dialog, idx, tgui)
+
+            QtWidgets.QApplication.closingDown()
             tgui.shutdown()
-            return
+        wrap_to_avoid_pytest_seg_fault(tgui, dialog_type, combobox_idx_name)
 
-        tgui.set_combobox(dialog.dia.baseline_combobox, idx)
-        self.check_baseline_spinbox(text_, dialog, idx, tgui)
+    @pytest.mark.parametrize("dialog_type", ["refine", "analyse", "threshold"])
+    def test_upper_threshold(self, tgui, dialog_type):
+        
+        def wrap_to_avoid_pytest_seg_fault(tgui, dialog_type):
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+    
+            tgui.switch_groupbox(dialog.dia.threshold_upper_groupbox, on=True)
+            tgui.enter_number_into_spinbox(dialog.dia.threshold_upper_spinbox,
+                                           100)
+    
+            assert config_dict["threshold_upper_limit_on"] is True
+            assert config_dict["threshold_upper_limit_value"] == 100
+    
+            tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
+            dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
+    
+            assert dialog.dia.threshold_upper_groupbox.isChecked()
+            assert dialog.dia.threshold_upper_spinbox.value() == 100
+            assert config_dict["threshold_upper_limit_on"] is True
+            assert config_dict["threshold_upper_limit_value"] == 100
 
-        QtWidgets.QApplication.closingDown()
-        tgui.shutdown()
+            tgui.shutdown()
+        wrap_to_avoid_pytest_seg_fault(tgui, dialog_type)
+
 
     @pytest.mark.parametrize("dialog_type", ["refine", "analyse"])
     def test_template_detection_method_widgets(self, tgui, dialog_type):
+
         dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
 
         # Correlation
@@ -5053,26 +5096,5 @@ class TestConfigs:
         dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
         assert dialog.dia.detection_cutoff_combobox.currentIndex() == 2
         assert config_dict["detection_threshold_type"] == "deconvolution"
-
-        tgui.shutdown()
-
-    @pytest.mark.parametrize("dialog_type", ["refine", "analyse", "threshold"])
-    def test_upper_threshold(self, tgui, dialog_type):
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
-
-        tgui.switch_groupbox(dialog.dia.threshold_upper_groupbox, on=True)
-        tgui.enter_number_into_spinbox(dialog.dia.threshold_upper_spinbox,
-                                       100)
-
-        assert config_dict["threshold_upper_limit_on"] is True
-        assert config_dict["threshold_upper_limit_value"] == 100
-
-        tgui = close_and_reload_for_defaults_check(tgui, save_="events_" + dialog_type)
-        dialog, config_dict = self.setup_events_with_dialog(tgui, dialog_type)
-
-        assert dialog.dia.threshold_upper_groupbox.isChecked()
-        assert dialog.dia.threshold_upper_spinbox.value() == 100
-        assert config_dict["threshold_upper_limit_on"] is True
-        assert config_dict["threshold_upper_limit_value"] == 100
 
         tgui.shutdown()

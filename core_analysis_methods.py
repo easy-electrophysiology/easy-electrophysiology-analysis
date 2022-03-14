@@ -895,10 +895,7 @@ def cut_trace_length_time(time_method, time_array, new_start_sample, new_stop_sa
         new_start_sample, new_stop_sample - sample idx to cut the trace from / to
 
     """
-    if time_method == "raw_times":
-        cut_time_array = time_array[:, new_start_sample:new_stop_sample]
-
-    elif time_method == "cumulative":
+    if time_method == "cumulative":
         norm_time_array = cut_trace_and_normalise_time(time_array, new_start_sample, new_stop_sample)
 
         rec_len = norm_time_array[0][-1]

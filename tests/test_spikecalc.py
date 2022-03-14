@@ -394,3 +394,41 @@ class TestSpikecalc:
             remaining_freqs = hz_to_add[cutoff_idx:]
 
         assert np.array_equal(fft_results["freqs"][peaks_idx], remaining_freqs), "Failed test_filter"
+
+""" There is something wrong with this test, the memory useage blows up and crashes computer... fix
+    
+       @pytest.mark.parametrize("fs", [8192])  # , 4592.7
+       @pytest.mark.parametrize("interp_factor", range(1, 5))
+       @pytest.mark.parametrize("interp_method", ["nearest", "linear", "cubic"])
+       def test_interpolate_data(self, test_spkcnt, fs, interp_factor, interp_method):
+
+      #     https://stackoverflow.com/questions/63918911/cubic-spline-interpolation-factors-required-to-pass-through-original-datapoints/63963671#63963671
+       #    Take the spike count vm and time, interpolate signal and check original samples are in interpolated sample, samlpe length is correct
+        #   and spike time and peaks are correctly identified after interpolation.
+   #
+    #       TODO: when this function fails the data is not cleared even though it should be torn down.
+
+
+           idx_with_spikes = (test_spkcnt.spikes_per_rec != 0).argmax()
+           x = test_spkcnt.norm_time_array
+           y = test_spkcnt.vm_array
+
+           y_interp = core_analysis_methods.interpolate_data(y, x[0], interp_method, interp_factor, 1)
+           x_interp = core_analysis_methods.interpolate_data(x, x[0], interp_method, interp_factor, 1)
+
+           # check spike time and peaks after interpolation
+           __, __, bounds = self.generate_analysis_parameters(test_spkcnt, None, "normalised", "all_samples")
+
+           spike_info_y = current_calc.find_spikes_above_record_threshold(test_spkcnt, 25, idx_with_spikes, idx_with_spikes,  bounds,  ["start", "stop"])
+           test_spkcnt.time_array = np.tile(x_interp, (test_spkcnt.num_recs, 1))
+           test_spkcnt.vm_array = np.tile(y_interp, (test_spkcnt.num_recs, 1))
+           spike_info_y_interp = current_calc.find_spikes_above_record_threshold(test_spkcnt, 25, idx_with_spikes, idx_with_spikes,  bounds,  ["start", "stop"])
+
+           assert utils.allclose(y, y_interp[:, ::interp_factor], 1e-08), "Interpolated signal does not include original samples"
+           assert np.shape(y_interp)[1] == interp_factor * (np.shape(y)[1] - 1) + 1, "Length of interpolated signal is incorrect"  # TODO: refactor shape call
+
+           assert np.isclose(utils.flatten_dict(spike_info_y, idx_with_spikes, "key")[1:], utils.flatten_dict(spike_info_y_interp, idx_with_spikes, "key")[1:], 1e-04).all(), "Peak times are not the same after interpolation"
+           assert np.isclose(utils.flatten_dict(spike_info_y, idx_with_spikes, 0)[1:], utils.flatten_dict(spike_info_y_interp, idx_with_spikes, 0), 1e-04)[1:].all(), "Spike amplitudes are not the same after interpolation"
+        
+    
+    """

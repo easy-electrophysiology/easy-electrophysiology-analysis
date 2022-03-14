@@ -33,7 +33,7 @@ os.environ["PYTEST_QT_API"] = "pyside2"
 Some helper functions are accessible outside of the class so they can be used in other modules. However, they are not added
 to tgui because there is too many of them. 
 """
-REGIONS_TO_RUN = ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"]
+REGIONS_TO_RUN = ["reg_1"]  # , "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"
 
 def run_curve_fitting(tgui, vary_coefs, func_type, region_name, norm_or_cumu_time, analyse_specific_recs,
                       slope_override=False, set_options_only=False, pos_or_neg="pos"):

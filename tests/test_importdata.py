@@ -577,8 +577,7 @@ class TestImportData:
 
     def test_file_tags(self):
         """
-        First load mels file she sent with the tag "sample tag"
-        Then make a multi-tag version of Neo's reader output and check it is formatted correctly
+        Load sample tag file make a multi-tag version of Neo's reader output and check it is formatted correctly
         Finally load a file without any tags and check the fields is hidden from file details
         """
         tgui = GuiTestSetup("test_tags")
@@ -625,7 +624,7 @@ class TestImportData:
         tgui = GuiTestSetup("test_tags")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
-        tgui.test_load_norm_time_file()  # TODO: this is assumed to be mels tagged file, checked against clampfit
+        tgui.test_load_norm_time_file()  # TODO: this is assumed to be tagged file, checked against clampfit
 
         for rec in range(tgui.mw.loaded_file.data.num_recs):
             rec_time = tgui.mw.loaded_file.data.time_array[rec]
