@@ -29,11 +29,12 @@ class TestEvents:
         tgui.shutdown()
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Correlation
+# Correlation Utils
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def setup_test_events_detection(self, tgui):
         """
+        Convenience function to retrieve data required to run voltage_calc.clements_bekkers_sliding_window() outside of Easy Electrophysiology for testing.
         """
         data = tgui.mw.loaded_file.data.im_array
         ts = tgui.mw.loaded_file.data.ts
@@ -56,9 +57,71 @@ class TestEvents:
 # Test Event Detection Functions
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
+    def test_deconvolution(self, tgui):
+        """
+        Test the implementation of deconvolution method (see voltage_calc.get_filtered_template_data_deconvolution()) against
+        alternative implementation (https://biosig.sourceforge.io), results loaded from text file after running on same data).
+        """
+        data, template, template_samples, run_settings, progress_bar_callback = self.setup_test_events_detection(tgui)
+
+        deconv = event_analysis_master.deconvolution_template_detection(data[0], run_settings, progress_bar_callback)
+
+        # in Easy Electrophysiology the normalisation is achieved via adjusting the amplitude of the template
+        # to match the data range. Here test an alternative implementation, to rescale the data and template range to 0 to +/- 1
+        template_ = template - np.max(template)
+        template_ = template_ / abs(np.min(template_) - np.max(template_))
+        data_ = data[0] - np.max(data[0])
+        data_ = data_ / abs(np.min(data_) - np.max(data_))
+
+        deconv_alt_norm = voltage_calc.get_filtered_template_data_deconvolution(data_,
+                                                                                template_,
+                                                                                run_settings["fs"],
+                                                                                run_settings["deconv_options"]["filt_low_hz"],
+                                                                                run_settings["deconv_options"]["filt_high_hz"])
+
+        assert utils.allclose(deconv, deconv_alt_norm, 1e-8)
+
+        # Test against biosig implementation (which itself differs from stimfits https://groups.google.com/g/stimfit/c/mg7nSv319Vs/m/a-RQETWnAAAJ, likely minor
+        # scaling from the filtering or data / template)
+        biosig_deconvolution = np.loadtxt(os.path.realpath(os.path.dirname(__file__) + "/biosig_deconvolution.csv"), delimiter=",")
+
+        assert utils.allclose(deconv, biosig_deconvolution, 1e-8)
+
+    def test_deconvolution_bandpass_filter(self):
+        """
+        Quick check on the deconvolution bandpass filter. This is implicitly checked in test_deconvolution() as the output matches other implementations.
+        However test here by creating a signal of summed sine waves with known frequencies. Apply the band-pass filter to filter out frequencies
+        at the edge of the added frequencies. Check that the filtered frequencies no longer exist in the signal. 
+        
+        This is simple for the sharp high-pass cutoff, only performed very roughly here for Gaussian cutoff (checking for gradual decrease in low frequencies). 
+        TODO: test low frequency cutoff is Gaussian
+        """
+        y, added_hz, fs, dist, n_freqs = test_utils.generate_test_frequency_spectra()  # large dist between freqs as a roll off on the gaussian filter is very gradual
+        Y = np.fft.fft(y)
+        freqs = np.fft.fftfreq(len(y), 1/fs)
+
+        # Filter the signal, check no frequencies remain below the low cutoff and the high cutoff rolls off.
+        min_hz = np.mean(added_hz[2] + 5)
+        max_hz = np.mean(np.array([added_hz[-3]]) + 5)
+        filt_Y = voltage_calc.fft_filter_gaussian_window(Y, min_hz, max_hz, len(y), fs) / fs
+
+        peaks_idx_after = peakutils.indexes(filt_Y, thres=0.01, min_dist=5)
+        peaks_idx_after = peaks_idx_after[np.where(freqs[peaks_idx_after] > 0)]
+        freqs_after = freqs[peaks_idx_after]
+        freq_amplitudes_after = np.real(filt_Y[peaks_idx_after])
+
+        assert np.array_equal(freqs_after,
+                              added_hz[np.where(added_hz > min_hz)])
+
+        percent_decrase = (freq_amplitudes_after / freq_amplitudes_after[0]) * 100
+        assert (percent_decrase <= np.array([100, 85, 60])).all()
+
     def test_correlation_and_detection_criterion(self, tgui):
         """
-        Test correlation and detection criterion routines against alternative implementations
+        Test correlation and detection criterion routines against alternative implementations:
+
+        Luke Campagnola: https://github.com/AllenInstitute/neuroanalysis
+        Stimfit: https://github.com/neurodroid/stimfit
         """
         data, template, template_samples, run_settings, progress_bar_callback = self.setup_test_events_detection(tgui)
 
@@ -99,57 +162,3 @@ class TestEvents:
         assert utils.allclose(np.corrcoef(r_[:-template_samples], stf_correlation)[1, 1],
                               1,
                               1e-10)
-
-    def test_deconvolution(self, tgui):
-        """
-        """
-        data, template, template_samples, run_settings, progress_bar_callback = self.setup_test_events_detection(tgui)
-
-        deconv = event_analysis_master.deconvolution_template_detection(data[0], run_settings, progress_bar_callback)
-
-        # in Easy Electrophysiology the normalisation is achieved via adjusting the amplitude of the template
-        # to match the data range. Here test an alternative implementation, to rescale the data and template range to 0 to +/- 1
-        template_ = template - np.max(template)
-        template_ = template_ / abs(np.min(template_) - np.max(template_))
-        data_ = data[0] - np.max(data[0])
-        data_ = data_ / abs(np.min(data_) - np.max(data_))
-
-        deconv_alt_norm = voltage_calc.get_filtered_template_data_deconvolution(data_,
-                                                                                template_,
-                                                                                run_settings["fs"],
-                                                                                run_settings["deconv_options"]["filt_low_hz"],
-                                                                                run_settings["deconv_options"]["filt_high_hz"])
-
-        assert utils.allclose(deconv, deconv_alt_norm, 1e-8)
-
-        # Test against biosig implementation (which itself differs from stimfits https://groups.google.com/g/stimfit/c/mg7nSv319Vs probably just minor
-        # scaling from the filtering or data / template)
-        biosig_deconvolution = np.loadtxt(os.path.realpath(os.path.dirname(__file__) + "/biosig_deconvolution.csv"), delimiter=",")
-
-        assert utils.allclose(deconv, biosig_deconvolution, 1e-8)
-
-    def test_deconvolution_bandpass_filter(self):
-        """
-        Quick check on the deconvolution bandpass filter but this is checked more explicitly above
-        """
-        # Create a signal of sine waves with known frequencies,
-        y, hz_to_add, fs, dist, n_freqs = test_utils.generate_test_frequency_spectra()  # large dist as a roll off on the gaussian filter is very gradual
-        Y = np.fft.fft(y)
-        freqs = np.fft.fftfreq(len(y), 1/fs)
-
-        # Filter the signal, check no frequencies remain below the low cutoff and the high cutoff rolls off. This filter is checked
-        # more exactly in the test test_deconvolution()
-        min_hz = np.mean(hz_to_add[2] + 5)
-        max_hz = np.mean(np.array([hz_to_add[-3]]) + 5)
-        filt_Y = voltage_calc.fft_filter_gaussian_window(Y, min_hz, max_hz, len(y), fs) / fs
-
-        peaks_idx_after = peakutils.indexes(filt_Y, thres=0.01, min_dist=5)
-        peaks_idx_after = peaks_idx_after[np.where(freqs[peaks_idx_after] > 0)]
-        freqs_after = freqs[peaks_idx_after]
-        freq_amplitudes_after = np.real(filt_Y[peaks_idx_after])
-
-        assert np.array_equal(freqs_after,
-                              hz_to_add[np.where(hz_to_add > min_hz)])
-
-        percent_decrase = (freq_amplitudes_after / freq_amplitudes_after[0]) * 100
-        assert (percent_decrase <= np.array([100, 85, 60])).all()
