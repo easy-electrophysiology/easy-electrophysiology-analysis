@@ -125,7 +125,7 @@ def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz
 
     INPUTS:
         data: 1 x N signal
-        data: 1 x T template signal
+        template: 1 x T template signal
         fs: sampling frequency of the original signal
         low_hz, high_hz: frequency cutoffs in Hz
 
@@ -147,11 +147,11 @@ def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz
 
 def fft_filter_gaussian_window(data, low_hz, high_hz, num_samples, fs):
     """
-    Apply a low-pass filter Gaussian window in Fourier domain with a
-    straight high-pass cutoff.
+    Apply a band-pass filter in the frequency domain, low-pass Gaussian window and
+    sharp high-pass cutoff.
 
     INPUTS:
-        data: Fourier-tranfsormed signal 1 ... N
+        data: Fourier-transformed signal 1 ... N
         see get_filtered_template_data_deconvolution() for other inputs
     """
     freqs = fftpack.fftfreq(num_samples, 1 / fs)
