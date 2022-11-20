@@ -33,7 +33,11 @@ os.environ["PYTEST_QT_API"] = "pyside2"
 Some helper functions are accessible outside of the class so they can be used in other modules. However, they are not added
 to tgui because there is too many of them. 
 """
-REGIONS_TO_RUN = ["reg_1"]  # , "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"
+SPEED = "fast"
+if SPEED == "fast":
+    REGIONS_TO_RUN = ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"] # ["reg_3"]
+else:
+    REGIONS_TO_RUN = ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"]
 
 def run_curve_fitting(tgui, vary_coefs, func_type, region_name, norm_or_cumu_time, analyse_specific_recs,
                       slope_override=False, set_options_only=False, pos_or_neg="pos"):
@@ -104,6 +108,7 @@ def setup_gui_for_analysis_and_run(tgui, region_name, func_type, rec_from, rec_t
     # and the rest will follow)
     for rec in range(tgui.adata.num_recs):
         tgui.mw.update_displayed_rec(rec)
+
         tgui.mw.curve_fitting_regions[region_name].bounds["upper_exp_lr"].setRegion((tgui.adata.start_times[rec],  # confirmed LR is not on plot, but the bounds are still updated because this is not a condition
                                                                                      tgui.adata.stop_times[rec]))  # in curve_fitting_linear_regions.py update_bounds_after_mw_change() wheras it is is linear_regions.py for spkcnt, skinetics and Ri
         tgui.mw.curve_fitting_regions[region_name].bounds["upper_bl_lr"].setRegion((0,
@@ -134,10 +139,11 @@ def get_combobox_idx_from_analysis_type(analysis_type):
            "max": 1,
            "mean": 2,
            "median": 3,
-           "monoexp": 5,
-           "biexp_decay": 6,
-           "biexp_event": 7,
-           "triexp": 8}
+           "area_under_curve_cf": 4,
+           "monoexp": 6,
+           "biexp_decay": 7,
+           "biexp_event": 8,
+           "triexp": 9}
 
     return idx[analysis_type]
 
@@ -556,7 +562,6 @@ class TestCurveFitting:
 # Test varying coefficients within function - QTable results
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-
     def test_analyse_all_vs_analyse_single_region(self, tgui):
         """
         run_curve_fitting() runs through the dialog, so check the panel buttons
@@ -841,7 +846,7 @@ class TestCurveFitting:
     @pytest.mark.parametrize("vary_coefs", [False, "within_function", "across_records"])
     @pytest.mark.parametrize("analyse_specific_recs", [False, True])
     @pytest.mark.parametrize("region_name", REGIONS_TO_RUN)
-    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median"])
+    @pytest.mark.parametrize("func_type", ["area_under_curve_cf", "min", "max", "mean", "median"])
     def test_min_max_mean_median_and_plots(self, tgui, func_type, vary_coefs, analyse_specific_recs, region_name):
         """
         See test_curve_fitting_model_with_changing_coefficients_within_a_function(), same idea but
@@ -849,7 +854,7 @@ class TestCurveFitting:
         """
         __, __ = run_curve_fitting(tgui, vary_coefs, func_type, region_name, tgui.time_type, analyse_specific_recs)
 
-        # Test model and tabldata by rec (cannot slice into the dict structure)
+        # Test model and tabledata by rec (cannot slice into the dict structure)
         for rec in range(tgui.adata.num_recs):
 
             tgui.mw.update_displayed_rec(rec)
@@ -862,7 +867,8 @@ class TestCurveFitting:
                     assert data == {}
                     continue
 
-                inserted_function = tgui.mw.loaded_file.data.vm_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
+                inserted_function = tgui.mw.loaded_file.data.im_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
+                inserted_function_time_period = tgui.mw.loaded_file.data.time_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
 
                 if func_type == "min":
                     assert data["min"] == np.min(inserted_function), "min"
@@ -880,18 +886,51 @@ class TestCurveFitting:
                     assert utils.allclose(data["median"], np.median(inserted_function)), "median"
                     self.check_plots(tgui, region_name, y_line=np.tile(data["median"], len(data["fit_time"])), x_line=data["fit_time"])
 
+                if func_type == "area_under_curve_cf":
+                    self.check_area_under_curve_and_plots(tgui, data, region_name, inserted_function, inserted_function_time_period)
+
                 assert utils.allclose(data["baseline"], tgui.adata.offset, 1e-08), "baseline"
 
-                if func_type in ["min", "max"]:
-                    peak_im = np.max(inserted_function) if func_type != "min" else np.min(inserted_function)
-                else:
-                    peak_im = np.mean(inserted_function) if func_type == "mean" else np.median(inserted_function)
-                assert data["amplitude"] == peak_im - data["baseline"], "amplitude"
+                if func_type != "area_under_curve_cf":
+                    peak_im = self.get_inserted_function_peak(func_type, inserted_function, axis=0)
+                    assert data["amplitude"] == peak_im - data["baseline"], "amplitude"
 
-    @pytest.mark.parametrize("vary_coefs", [False, "within_function"])
+    def get_inserted_function_peak(self, func_type, inserted_function, axis=1):
+        """"""
+        if func_type in ["min", "max"]:
+            peak_im = np.max(inserted_function, axis=axis) if func_type != "min" else np.min(inserted_function, axis=axis)
+        else:
+            peak_im = np.mean(inserted_function, axis=axis) if func_type == "mean" else np.median(inserted_function, axis=axis)
+        return peak_im
+
+    def check_area_under_curve_and_plots(self, tgui, data, region_name, inserted_function, inserted_function_time_period):
+        """
+        Hre we are just testing it is all displayed correctly, core analysis method is tested below.
+        """
+        norm_inserted_function = inserted_function - tgui.adata.offset
+        test_auc, test_auc_ms = core_analysis_methods.area_under_curve_ms(norm_inserted_function, tgui.adata.ts)
+        test_baseline_data = np.repeat(tgui.adata.offset, inserted_function.size)
+
+        # data
+        assert data["area_under_curve_cf"] == test_auc, "test_auc"
+        assert data["area_under_curve_cf_ms"] == test_auc_ms, "test_auc_ms"
+        assert np.array_equal(data["auc_time_period"], inserted_function_time_period), "inserted_function_time_period"
+        assert np.array_equal(data["auc_data_period"], inserted_function), "inserted_function"
+        assert np.array_equal(data["baseline_data"], test_baseline_data), "test_baseline_data"
+
+        # plots
+        baseline_curve = tgui.mw.loaded_file_plot.curve_fitting_auc_plots[region_name].curves[0]
+        assert np.array_equal(baseline_curve.xData, inserted_function_time_period), "inserted_function_time_period baseline_curve"
+        assert np.array_equal(baseline_curve.yData, test_baseline_data), "test_baseline_data baseline_curve"
+
+        data_curve = tgui.mw.loaded_file_plot.curve_fitting_auc_plots[region_name].curves[1]
+        assert np.array_equal(data_curve.xData, inserted_function_time_period), "inserted_function_time_period data_curve"
+        assert np.array_equal(data_curve.yData, inserted_function), "inserted_function data_curve"
+
+    @pytest.mark.parametrize("vary_coefs", [False, "within_function", "across_records"])
     @pytest.mark.parametrize("analyse_specific_recs", [False, True])
     @pytest.mark.parametrize("region_name", REGIONS_TO_RUN)
-    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median"])
+    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median", "area_under_curve_cf"])
     def test_qtable_min_max_mean_median(self, tgui, func_type, vary_coefs, analyse_specific_recs, region_name):
         """
         Test the results shown on the table for the min, max, mean, median measures
@@ -901,7 +940,7 @@ class TestCurveFitting:
         num_recs = rec_to - rec_from + 1
         data = utils.np_empty_nan((num_recs, tgui.adata.function_samples + 1))
         for idx, rec in enumerate(range(rec_from, rec_to + 1)):
-            data[idx, :] = tgui.mw.loaded_file.data.vm_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
+            data[idx, :] = tgui.mw.loaded_file.data.im_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
 
         if func_type == "min":
             assert utils.allclose(np.min(data, axis=1),
@@ -923,9 +962,30 @@ class TestCurveFitting:
                                   tgui.get_data_from_qtable("median", rec_from, rec_to, "curve_fitting"),
                                   1e-08), "median"
 
-    @pytest.mark.parametrize("vary_coefs", [False, "within_function"])
+        if func_type == "area_under_curve_cf":
+            test_auc, test_auc_ms = self.get_area_under_curve_results_from_data(tgui, data)
+
+            assert utils.allclose(test_auc,
+                                  tgui.get_data_from_qtable("area_under_curve_cf", rec_from, rec_to, "curve_fitting"),
+                                  1e-08), "area_under_curve_cf"
+
+            assert utils.allclose(test_auc_ms,
+                                  tgui.get_data_from_qtable("area_under_curve_cf_ms", rec_from, rec_to, "curve_fitting"),
+                                  1e-08), "area_under_curve_cf_ms"
+
+        assert utils.allclose(tgui.adata.offset,
+                              tgui.get_data_from_qtable("baseline", rec_from, rec_to, "curve_fitting"),
+                              1e-08), "baseline"
+
+        if func_type != "area_under_curve_cf":
+            peak_im = self.get_inserted_function_peak(func_type, data)
+            assert utils.allclose(peak_im - tgui.adata.offset,
+                                  tgui.get_data_from_qtable("amplitude", rec_from, rec_to, "curve_fitting"),
+                                  1e-08), "amplitude"
+
+    @pytest.mark.parametrize("vary_coefs", [False, "within_function", "across_records"])
     @pytest.mark.parametrize("analyse_specific_recs", [False, True])
-    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median"])
+    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median", "area_under_curve_cf"])
     def test_all_recs_analysed_together_curve_fit_min_max_mean_median(self, tgui, func_type, vary_coefs,
                                                                       analyse_specific_recs):
         """
@@ -936,7 +996,7 @@ class TestCurveFitting:
         num_recs = rec_to - rec_from + 1
         data = utils.np_empty_nan((num_recs, tgui.adata.function_samples + 1))
         for idx, rec in enumerate(range(rec_from, rec_to + 1)):
-            data[idx, :] = tgui.mw.loaded_file.data.vm_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
+            data[idx, :] = tgui.mw.loaded_file.data.im_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1]
 
         if func_type == "min":
             min_results = tgui.get_data_from_qtable("min", rec_from, rec_to, "curve_fitting",
@@ -970,11 +1030,30 @@ class TestCurveFitting:
                                   median_results[0],
                                   1e-08), "median"
 
+        elif func_type == "area_under_curve_cf":
+            test_auc, test_auc_ms = self.get_area_under_curve_results_from_data(tgui, data)
+
+            area_under_curve_results = tgui.get_data_from_qtable("area_under_curve_cf", rec_from, rec_to, "curve_fitting", return_regions=True)
+            self.check_all_sublists_are_equal(area_under_curve_results)
+            assert utils.allclose(test_auc, area_under_curve_results[0], 1e-08), "area_under_curve_cf"
+
+            area_under_curve_ms_results = tgui.get_data_from_qtable("area_under_curve_cf_ms", rec_from, rec_to, "curve_fitting", return_regions=True)
+            self.check_all_sublists_are_equal(area_under_curve_ms_results)
+            assert utils.allclose(test_auc_ms, area_under_curve_ms_results[0], 1e-08), "area_under_curve_cf"
+
+    def get_area_under_curve_results_from_data(self, tgui, data, baseline_override=False):
+        """"""
+        baseline = np.atleast_2d(data[:, 0]).T if baseline_override is False else baseline_override
+        norm_data = data - baseline
+        test_auc, __ = core_analysis_methods.area_under_curve_ms(norm_data, tgui.adata.ts)  # this actually works for a matrix for data, but not for ms, not intended use
+        test_auc_ms = (data.shape[1] - 1) * tgui.adata.ts * 1000
+        return test_auc, test_auc_ms
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Test Bounds Varying Across Recs
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median", "monoexp"])
+    @pytest.mark.parametrize("func_type", ["min", "max", "mean", "median", "area_under_curve_cf", "monoexp"])
     @pytest.mark.parametrize("mode", ["dont_align_across_recs",
                                       "align_across_recs"])
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
@@ -993,18 +1072,16 @@ class TestCurveFitting:
         rec_from, rec_to = run_curve_fitting(tgui, False, func_type, "all", tgui.time_type, analyse_specific_recs=analyse_specific_recs,
                                              slope_override=True)
 
-        for region_name in REGIONS_TO_RUN:
+        for region_name in ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"]:
 
             for rec in range(rec_from, rec_to + 1):
 
                 set_rec = 0 if mode == "align_across_recs" else rec
 
-                results_key = func_type if func_type in ["min", "max", "median", "mean"] else "fit"
+                results_key = func_type if func_type in ["min", "max", "median", "mean", "area_under_curve_cf"] else "fit"
                 ee_data = tgui.mw.loaded_file.curve_fitting_results[region_name]["data"][rec][results_key]
 
-                data_range = tgui.adata.vm_array[rec][tgui.adata.start_sample[set_rec]:
-                                                      tgui.adata.stop_sample[
-                                                          set_rec] + 1]
+                data_range = tgui.adata.im_array[rec][tgui.adata.start_sample[set_rec]: tgui.adata.stop_sample[set_rec] + 1]
 
                 if func_type == "min":
                     test_data = np.min(data_range)
@@ -1014,11 +1091,17 @@ class TestCurveFitting:
                     test_data = np.mean(data_range)
                 elif func_type == "median":
                     test_data = np.median(data_range)
+
+                elif func_type == "area_under_curve_cf":
+                    baseline = tgui.mw.loaded_file.curve_fitting_results[region_name]["data"][rec]["baseline"]
+                    test_data, __ = self.get_area_under_curve_results_from_data(tgui, np.atleast_2d(data_range), baseline_override=baseline)
+
                 elif func_type == "monoexp":
                     time_range = tgui.adata.time_array[rec][tgui.adata.start_sample[set_rec]: tgui.adata.stop_sample[set_rec] + 1]
                     __, test_data, __ = core_analysis_methods.fit_curve(func_type, time_range, data_range, direction=-1)
 
-                assert np.array_equal(ee_data, test_data), " ".join([func_type, region_name, str(rec)])
+                assert utils.allclose(ee_data, test_data), " ".join([func_type, region_name, str(rec)])
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Max Slope
@@ -1037,7 +1120,7 @@ class TestCurveFitting:
         tgui.left_mouse_click(tgui.mw.mw.curve_fitting_show_dialog_button)
         tgui.switch_checkbox(tgui.mw.dialogs["curve_fitting"].dia.hide_baseline_radiobutton, on=True)
         tgui.mw.curve_fitting_regions["reg_1"].bounds["upper_exp_lr"].setRegion((0.2626, 0.2632))
-        tgui.set_combobox(tgui.mw.dialogs["curve_fitting"].dia.fit_type_combobox, 4)
+        tgui.set_combobox(tgui.mw.dialogs["curve_fitting"].dia.fit_type_combobox, 5)
 
         # Rise sample 3 and 5 search region
         tgui.switch_checkbox(tgui.mw.dialogs["curve_fitting"].dia.max_slope_direction_neg_radiobutton, on=True)
@@ -1060,6 +1143,29 @@ class TestCurveFitting:
         tgui.enter_number_into_spinbox(tgui.mw.dialogs["curve_fitting"].dia.max_slope_num_samples, 7)
         tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
         assert np.round(float(tgui.mw.mw.table_tab_tablewidget.item(2, 1).data(0)), 4) == axograph_first_event_decay_7
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Area Under The Curve
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_area_under_the_curve_against_axograph(self, tgui):
+        """
+        Set the bounds over the first event of the file, similar to AUC test in test_events() in which events analysis is used.
+        """
+        axograph_first_event_auc = -57.205
+        tgui.load_a_filetype("cell_5")
+
+        tgui.set_analysis_type("curve_fitting")
+        tgui.left_mouse_click(tgui.mw.mw.curve_fitting_show_dialog_button)
+        tgui.switch_checkbox(tgui.mw.dialogs["curve_fitting"].dia.hide_baseline_radiobutton, on=True)
+        tgui.mw.curve_fitting_regions["reg_1"].bounds["upper_exp_lr"].setRegion((519 * tgui.mw.loaded_file.data.ts, 585 * tgui.mw.loaded_file.data.ts))  # hard coded, taken from test_events.test_auc_against_axograph()
+        tgui.set_combobox(tgui.mw.dialogs["curve_fitting"].dia.fit_type_combobox, 4)
+
+        tgui.mw.cfgs.curve_fitting_region_position_configs["reg_1"]["upper_bl_lr_lowerbound"] = [519 * tgui.mw.loaded_file.data.ts]
+        tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
+        first_auc = tgui.mw.loaded_file.curve_fitting_results["reg_1"]["data"][0]["area_under_curve_cf"]
+
+        assert utils.allclose(axograph_first_event_auc, first_auc, 1e-1)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Region Options
@@ -1167,11 +1273,11 @@ class TestCurveFitting:
 
                 if region_name == "reg_1":  # max
                     max_results = tgui.get_data_from_qtable("max", rec_from, rec_to, "curve_fitting", return_regions=True)[0]
-                    assert utils.allclose(np.max(tgui.adata.vm_array[rec]), max_results[rec], 1e-08), "b0"
+                    assert utils.allclose(np.max(tgui.adata.im_array[rec]), max_results[rec], 1e-08), "b0"
 
                 if region_name == "reg_2":  # mean
                     mean_results = tgui.get_data_from_qtable("mean", rec_from, rec_to, "curve_fitting", return_regions=True)[0]
-                    mean_of_data = np.mean(tgui.mw.loaded_file.data.vm_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1])
+                    mean_of_data = np.mean(tgui.mw.loaded_file.data.im_array[rec][tgui.adata.start_sample:tgui.adata.stop_sample + 1])
                     assert utils.allclose(mean_results[rec], mean_of_data, 1e-08), "mean"
 
                 if region_name == "reg_3":  # monoexp
@@ -1180,7 +1286,7 @@ class TestCurveFitting:
                 if region_name == "reg_4":  # biexp_ vent
                     event_time = list(data["event_info"].keys())[0]
                     peak_im = data["event_info"][event_time]["peak"]["im"]
-                    peak_data = np.max(tgui.adata.vm_array[rec])
+                    peak_data = np.max(tgui.adata.im_array[rec])
                     assert peak_im == peak_data
                     assert (data["r2"] < 1).all()  # cant fit a biexp to a monoexp
 
@@ -1190,6 +1296,6 @@ class TestCurveFitting:
 
                 if region_name == "reg_6":   # triexp
                     # Here we just checking triexp is analysed correctly in region 6 so this suffices
-                    amplitude = np.max(tgui.adata.vm_array[rec]) - tgui.adata.resting_vm
+                    amplitude = np.max(tgui.adata.im_array[rec]) - tgui.adata.resting_vm
                     b1_sums = np.sum([data["b1"], data["b2"], data["b3"]])
                     assert utils.allclose(amplitude, b1_sums, 1e-05)

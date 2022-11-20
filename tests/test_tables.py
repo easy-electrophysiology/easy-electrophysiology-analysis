@@ -18,6 +18,9 @@ import test_curve_fitting
 import more_itertools
 import keyboard
 import time
+from slow_vs_fast_settings import get_settings
+
+SPEED = "fast"
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Test Table Data Classes
@@ -37,6 +40,7 @@ class SpkcntTGui(GuiTestSetup):
         # = GuiTestSetup("artificial")  # no setup main window, do in function
         self.setup_mainwindow(show=True)
         self.test_update_fileinfo()
+        self.speed = SPEED
         self.setup_artificial_data("cumulative")
         self.raise_mw_and_give_focus()
 
@@ -49,8 +53,9 @@ class EventsGui(GuiTestSetup):
 
         self.setup_mainwindow(show=True)
         self.test_update_fileinfo(norm=True)
-        self.analysis_type = "events_normalised"
-        self.setup_artificial_data("cumulative", analysis_type="events_multi_record")
+        self.analysis_type = "events_multi_record_table"
+        self.speed = SPEED 
+        self.setup_artificial_data("cumulative", analysis_type="events_multi_record_table")
         self.raise_mw_and_give_focus()
 
     def __del__(self):
@@ -81,7 +86,7 @@ class TestTables:
         tgui = CurveFittingGui()
         tgui.mw.mw.actionBatch_Mode_ON.trigger()
 
-        # File 1, reg_1, triexp -------------------------------------------------------------------------------------------------------------------------------
+        # File 1, reg_1, reg_3,  triexp, area_under_curve_cf -------------------------------------------------------------------------------------------------------------------------------
 
         self.run_curve_fitting_analysis(tgui, "1")
 
@@ -91,11 +96,12 @@ class TestTables:
 
         self.check_curve_fitting_filenames(tgui, [file1_start_col], ["reg_1"], tgui.fake_filename)
 
-        assert file1_col_keys == self.cf_keys("triexp")
+        assert file1_col_keys == self.combine([self.cf_keys("triexp"),
+                                               self.cf_keys("area_under_curve_cf")])
 
         data_on_table, __ = self.get_and_cut_col_data_on_table(tgui, file1_start_col, file1_end_col)
 
-        stored_tabledata, __ = self.get_curve_fitting_table(tgui, rec_from=0, rec_to=tgui.adata.num_recs-1, regions=["reg_1"], region_keys=[file1_col_keys], file_idx=0)
+        stored_tabledata, __ = self.get_curve_fitting_table(tgui, rec_from=0, rec_to=tgui.adata.num_recs-1, regions=["reg_1", "reg_3"], region_keys=[self.cf_keys("triexp"), self.cf_keys("area_under_curve_cf")], file_idx=0)
 
         assert np.array_equal(data_on_table, stored_tabledata)
 
@@ -103,11 +109,11 @@ class TestTables:
 
         rec_from, rec_to = self.run_curve_fitting_analysis(tgui, "2")
 
-        file2_start_col = self.get_col_file_start_indexes(tgui)[1]
+        file2_start_col = self.get_col_file_start_indexes(tgui)[2]
         file2_end_col = tgui.mw.mw.table_tab_tablewidget.columnCount()
         file2_col_keys = self.get_col_keys(tgui, file2_start_col, file2_end_col, "curve_fitting", row=1)
 
-        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[1:3], ["reg_2", "reg_3"], tgui.fake_filename)
+        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[2:4], ["reg_2", "reg_3"], tgui.fake_filename)
 
         assert file2_col_keys == self.combine([self.cf_keys("min"),
                                                self.cf_keys("mean")])
@@ -120,25 +126,24 @@ class TestTables:
 
         assert np.array_equal(data_on_table, stored_tabledata)
 
-        # File 3, reg_2, reg_3, reg_4,monoexp, biexp_event, biexp_decay --------------------------------------------------------------------------------
+        # File 3, reg_1, reg_2, reg_3, reg_4, area_under_curve, monoexp, biexp_event, biexp_decay --------------------------------------------------------------------------------
 
         self.run_curve_fitting_analysis(tgui, "3")
 
-        file3_start_col = self.get_col_file_start_indexes(tgui)[3]  # all hard coded
+        file3_start_col = self.get_col_file_start_indexes(tgui)[4]  # all hard coded
         file3_end_col = tgui.mw.mw.table_tab_tablewidget.columnCount()
         file3_col_keys = self.get_col_keys(tgui, file3_start_col, file3_end_col, "curve_fitting", row=1)
 
-        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[3:7], ["reg_2", "reg_3", "reg_4"], tgui.fake_filename)
+        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[4:8], ["reg_1", "reg_2", "reg_3", "reg_4"], tgui.fake_filename)
 
-        assert file3_col_keys == self.combine([self.cf_keys("monoexp"),
-                                               self.cf_keys("biexp_event"),
-                                               self.cf_keys("biexp_decay")])
+        assert file3_col_keys == self.combine([self.cf_keys("area_under_curve_cf"), self.cf_keys("monoexp"), self.cf_keys("biexp_event"), self.cf_keys("biexp_decay")])
 
         data_on_table, table_text = self.get_and_cut_col_data_on_table(tgui, file3_start_col, file3_end_col)
         stored_tabledata, __ = self.get_curve_fitting_table(tgui, rec_from=0, rec_to=tgui.adata.num_recs-1,
-                                                           regions=["reg_2", "reg_3", "reg_4"], region_keys=[self.cf_keys("monoexp"),
-                                                                                                             self.cf_keys("biexp_event"),
-                                                                                                             self.cf_keys("biexp_decay")],
+                                                           regions=["reg_1", "reg_2", "reg_3", "reg_4"], region_keys=[self.cf_keys("area_under_curve_cf"),
+                                                                                                                      self.cf_keys("monoexp"),
+                                                                                                                      self.cf_keys("biexp_event"),
+                                                                                                                      self.cf_keys("biexp_decay")],
                                                            file_idx=2)
 
         assert np.array_equal(data_on_table, stored_tabledata, equal_nan=True)
@@ -147,11 +152,11 @@ class TestTables:
 
         rec_from, rec_to = self.run_curve_fitting_analysis(tgui, "4")
 
-        file4_start_col = self.get_col_file_start_indexes(tgui)[6]  # all hard coded
+        file4_start_col = self.get_col_file_start_indexes(tgui)[8]  # all hard coded
         file4_end_col = tgui.mw.mw.table_tab_tablewidget.columnCount()
         file4_col_keys = self.get_col_keys(tgui, file4_start_col, file4_end_col, "curve_fitting", row=1)
 
-        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[6:8], ["reg_5", "reg_6"], tgui.fake_filename)
+        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[8:10], ["reg_5", "reg_6"], tgui.fake_filename)
 
         assert file4_col_keys == self.combine([self.cf_keys("median"),
                                                self.cf_keys("triexp")])
@@ -168,11 +173,11 @@ class TestTables:
 
         rec_from, rec_to = self.run_curve_fitting_analysis(tgui, "5")
 
-        file5_start_col = self.get_col_file_start_indexes(tgui)[8]  # all hard coded
+        file5_start_col = self.get_col_file_start_indexes(tgui)[10]  # all hard coded
         file5_end_col = tgui.mw.mw.table_tab_tablewidget.columnCount()
         file5_col_keys = self.get_col_keys(tgui, file5_start_col, file5_end_col, "curve_fitting", row=1)
 
-        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[8:], ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"], tgui.fake_filename)
+        self.check_curve_fitting_filenames(tgui, self.get_col_file_start_indexes(tgui)[10:], ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"], tgui.fake_filename)
 
         assert file5_col_keys == self.combine([self.cf_keys("min"),
                                                self.cf_keys("median"),
@@ -206,12 +211,12 @@ class TestTables:
 
         self.run_curve_fitting_analysis(tgui, "1")
 
-        test_file1_col_keys = self.cf_keys("triexp", add_filename=True)
+        test_file1_col_keys = self.combine([self.cf_keys("triexp", add_filename=True), self.cf_keys("area_under_curve_cf", add_filename=True)])
         file1_end_col = len(test_file1_col_keys)
 
         file1_col_keys, file1_filename = self.get_col_keys(tgui, 0, file1_end_col, "curve_fitting", row=0, return_filename=True)
 
-        file1_regions = ["reg_1"]
+        file1_regions = ["reg_1", "reg_3"]
         assert file1_col_keys == test_file1_col_keys
 
         file1_start_row = 1
@@ -240,11 +245,12 @@ class TestTables:
                                                                             "file2_regions": file2_regions, "file2_col_keys": file2_col_keys, "file2_start_row": file2_start_row, "file2_end_row": file2_end_row, "file2_filename": file2_filename, "file2_end_col": file2_end_col},
                                            rec_from=rec_from, rec_to=rec_to)
 
-        # File 3, reg_2, reg_3, reg_4,monoexp, biexp_event, biexp_decay --------------------------------------------------------------------------------
+        # File 3, reg_1, reg_2, reg_3, reg_4, area_under_curve, monoexp, biexp_event, biexp_decay --------------------------------------------------------------------------------
 
         self.run_curve_fitting_analysis(tgui, "3")
 
-        test_file3_col_keys =  self.combine([self.cf_keys("monoexp", add_filename=True),
+        test_file3_col_keys =  self.combine([self.cf_keys("area_under_curve_cf", add_filename=True),
+                                             self.cf_keys("monoexp", add_filename=True),
                                              self.cf_keys("biexp_event", add_filename=True),
                                              self.cf_keys("biexp_decay", add_filename=True)])
 
@@ -253,7 +259,7 @@ class TestTables:
         # need to calc num cols or hard code
         file3_col_keys, file3_filename = self.get_col_keys(tgui, 0, file3_end_col, "curve_fitting", row=file2_end_row + 1, return_filename=True)  # TODO: nicer way to this
 
-        file3_regions = ["reg_2", "reg_3", "reg_4"]
+        file3_regions = ["reg_1", "reg_2", "reg_3", "reg_4"]
         assert file3_col_keys == test_file3_col_keys
 
         file3_start_row = file2_end_row + 2
@@ -323,6 +329,7 @@ class TestTables:
             "min": ['record_num', 'baseline', 'min', 'amplitude'],
             "max": ['record_num', 'baseline', 'max', 'amplitude'],
             "mean": ['record_num', 'baseline', 'mean', 'amplitude'],
+            "area_under_curve_cf": ["record_num", "baseline", "area_under_curve_cf", "area_under_curve_cf_ms"],
             "median": ['record_num', 'baseline', 'median', 'amplitude'],
             "monoexp": ['record_num', 'baseline', 'peak', 'amplitude', 'b0', 'b1', 'tau', 'r2'],
             "biexp_decay":['record_num', 'baseline', 'peak', 'amplitude', 'b0', 'b1', 'tau1', 'b2', 'tau2', 'r2'],
@@ -382,30 +389,8 @@ class TestTables:
         assert table.item(12, 0).data(0) == ""
         assert "region" in table.item(13, 0).data(0)
 
-    @pytest.mark.parametrize('region', ["reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
-    def test_curve_fitting_summary_statisitcs_different_analysis(self, region):
-        """
-        When the analysis is different for a region, summary statistics cannot be calculated
-        and a window is shown - check this occurs here.
-        """
-        tgui = CurveFittingGui()
-        tgui.mw.mw.actionBatch_Mode_ON.trigger()
-        self.set_row_or_column_display(tgui, "row")
-        tgui.switch_mw_tab(1)
-
-        self.reload_curve_fitting_file(tgui)
-        self.run_default_curve_fitting(tgui, "min", region)
-        self.reload_curve_fitting_file(tgui)
-        self.run_default_curve_fitting(tgui, "max", region)
-
-        QtCore.QTimer.singleShot(1000, lambda: self.check_sumstat_messagebox_error(tgui))
-        if region == "reg_1":
-            tgui.mw.mw.curve_fitting_summary_statistics_combobox.activated.emit(0)  # currentIndexChanged() wont activate as idx is already 0
-        else:
-            tgui.mw.mw.curve_fitting_summary_statistics_combobox.setCurrentIndex(int(region[-1]) - 1)
-
-    @pytest.mark.parametrize("region", ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
-    @pytest.mark.parametrize("analysis", ["max", "mean", "median", "monoexp", "biexp_decay", "biexp_event", "triexp"])
+    @pytest.mark.parametrize("region", get_settings(SPEED, "curve_fitting_table"))
+    @pytest.mark.parametrize("analysis", ["min", "max", "mean", "median", "area_under_curve_cf", "monoexp", "biexp_decay", "biexp_event", "triexp"])
     def test_curve_fitting_summary_statistics(self, region, analysis):
         """
         Check summary statistics are calculated correctly for curve fitting analysis shown on table.
@@ -456,10 +441,6 @@ class TestTables:
             all_summary_statistics["file_" + str(file_idx + 1)] = summary_statistics
 
         return all_summary_statistics
-
-    def check_sumstat_messagebox_error(self, tgui):
-        assert "All region analysis type (e.g. Minimum) must match across files to calculate summary statistics" in tgui.mw.messagebox.text()
-        keyboard.press("enter")
 
     def check_row_table_against_curve_fitting(self, tgui, file_regions, file_col_keys, file_row_start, file_row_end, file_filename, file_end_col, rec_from, rec_to, file_idx):
         """
@@ -512,8 +493,8 @@ class TestTables:
         tgui.switch_groupbox(tgui.mw.mw.curve_fitting_recs_to_analyse_groupbox, on=False)  # reset....
 
         if file_num == "1":
-            for region_name, func_type in zip(["reg_1"],
-                                              ["triexp"]):
+            for region_name, func_type in zip(["reg_1", "reg_3"],
+                                              ["triexp", "area_under_curve_cf"]):
 
                 self.run_default_curve_fitting(tgui, func_type, region_name)
 
@@ -524,8 +505,8 @@ class TestTables:
                 self.run_default_curve_fitting(tgui, func_type, region_name)
 
         if file_num == "3":
-            for region_name, func_type in zip(["reg_2", "reg_3", "reg_4"],
-                                              ["monoexp", "biexp_event", "biexp_decay"]):
+            for region_name, func_type in zip(["reg_1", "reg_2", "reg_3", "reg_4"],
+                                              ["area_under_curve_cf", "monoexp", "biexp_event", "biexp_decay"]):
                 self.run_default_curve_fitting(tgui, func_type, region_name)
 
         if file_num == "4":
@@ -550,6 +531,7 @@ class TestTables:
                                                                 rec_from=0,
                                                                 rec_to=tgui.adata.num_recs,  #
                                                                 set_options_only=False)
+
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -763,7 +745,7 @@ class TestTables:
         File 4, max slope off, biexp on
         File 5, max slope on, monoexp on, analyse specific recs
         """
-        multi_rec = "events_multi_record" if to_run in ["1", "2", "3", "5"] else "events_one_record"
+        multi_rec = "events_multi_record_table" if to_run in ["1", "2", "3", "5"] else "events_one_record"
         tgui.setup_artificial_data("cumulative", analysis_type=multi_rec)
         tgui.update_events_to_varying_amplitude_and_tau()
         tgui.set_fake_filename()
@@ -1071,7 +1053,7 @@ class TestTables:
         File 5 max sloep on, analyse specific recs
         """
         norm_or_cum = "normalised" if to_run in ["1", "5"] else "cumulative"
-        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum)
+        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum, "skinetics_table")
 
         if to_run == "1":
             __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs=True)
@@ -1146,9 +1128,9 @@ class TestTables:
         if not max_slope:
             skinetics_data = skinetics_data[:, :-2]
 
-        assert np.array_equal(data_on_table, skinetics_data, equal_nan=True), "col skinetics idx: " + idx
-        assert np.min(data_on_table[:, 0]) == rec_from + 1, "rec_from skinetics idx: " + idx
-        assert np.max(data_on_table[:, 0]) == rec_to + 1, "rec_to skinetics idx: " + idx
+        assert np.array_equal(data_on_table, skinetics_data, equal_nan=True), "col skinetics idx: "
+        assert np.min(data_on_table[:, 0]) == rec_from + 1, "rec_from skinetics idx: "
+        assert np.max(data_on_table[:, 0]) == rec_to + 1, "rec_to skinetics idx: "
 
         # Summary Statistics
         num_recs = rec_to - rec_from + 1  # account for difference when analyse-specific-recs on / off
@@ -1295,7 +1277,10 @@ class TestTables:
         tgui.mw.mw.actionBatch_Mode_ON.trigger()
         self.set_row_or_column_display(tgui, "row")
 
-        rec_from, rec_to = [4, 50]  # TODO: these are hard coded from tgui.rec_from
+        if tgui.speed == "fast":
+            rec_from, rec_to = [1, 3]
+        else:
+            rec_from, rec_to = [4, 50]  # TODO: these are hard coded from tgui.rec_from
 
         # File 1 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1398,7 +1383,7 @@ class TestTables:
         File 5, bounds, sag off
         """
         norm_or_cum = "normalised" if to_run in ["1", "5"] else "cumulative"
-        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum)
+        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum, "Ri")
 
         if to_run == "1":
             tgui.run_ri_analysis_user_input_im(0, tgui.adata.num_recs - 1)
@@ -1512,7 +1497,10 @@ class TestTables:
         tgui.mw.mw.actionBatch_Mode_ON.trigger()
         self.set_row_or_column_display(tgui, "row")
 
-        rec_from, rec_to = [4, 50]  # TODO: DOC
+        if SPEED == "fast":
+            rec_from, rec_to = [1, 3]
+        else:
+            rec_from, rec_to = [4, 50]
 
         # File 1 --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1633,7 +1621,7 @@ class TestTables:
         File 5 user im, other parameters off
         """
         norm_or_cum = "normalised" if to_run in ["2", "5"] else "cumulative"
-        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum)
+        rec_from, rec_to = self.setup_artificial_spkcnt(tgui, norm_or_cum, "spkcnt")
 
         if to_run == "1":
             self.fast_run_spkcnt(tgui,
@@ -1760,7 +1748,8 @@ class TestTables:
 
             if col_key == "rheobase":
                 # Check the rheobase shown and method type on the first two records are correct
-                assert np.array_equal(stored_tabledata.loc[1, col_key], data_on_table[0, col], equal_nan=True)
+                assert np.array_equal(stored_tabledata.loc[0, col_key], data_on_table[0, col], equal_nan=True)
+
                 summary_statistics["data"][col_key] = {"M": data_on_table[0, col], "SD": None, "SE": None}
                 if text:
                     assert rheobase_rec_or_exact in text[0][2]
@@ -1793,11 +1782,45 @@ class TestTables:
         for col, col_key in enumerate(file_col_keys):
 
             if col_key == "rheobase":
-                assert np.array_equal(stored_tabledata.loc[1, col_key], data_on_table[0, col], equal_nan=True)
+                assert np.array_equal(stored_tabledata.loc[0, col_key], data_on_table[0, col], equal_nan=True)  # ERROR
+
                 if text:
                     assert rheobase_rec_or_exact in text[0][2]  # will have to fix
             else:
                 assert np.array_equal(stored_tabledata.loc[rec_from:rec_to, col_key], data_on_table[:, col], equal_nan=True)  # TODO: will have to fix recs
+
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # Curve Fitting Error-Prone Tests 
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize('region', ["reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
+    def test_curve_fitting_summary_statisitcs_different_analysis(self, region):
+        """
+        When the analysis is different for a region, summary statistics cannot be calculated
+        and a window is shown - check this occurs here.
+        """
+        tgui = CurveFittingGui()
+        tgui.mw.mw.actionBatch_Mode_ON.trigger()
+        self.set_row_or_column_display(tgui, "row")
+        tgui.switch_mw_tab(1)
+
+        self.reload_curve_fitting_file(tgui)
+        self.run_default_curve_fitting(tgui, "min", region)
+        self.reload_curve_fitting_file(tgui)
+        self.run_default_curve_fitting(tgui, "max", region)
+
+        QtCore.QTimer.singleShot(1000, lambda: self.check_sumstat_messagebox_error(tgui))
+        if region == "reg_1":
+            tgui.mw.mw.curve_fitting_summary_statistics_combobox.activated.emit(0)  # currentIndexChanged() wont activate as idx is already 0
+        else:
+            tgui.mw.mw.curve_fitting_summary_statistics_combobox.setCurrentIndex(int(region[-1]) - 1)
+
+        tgui.shutdown()
+
+    def check_sumstat_messagebox_error(self, tgui):
+        assert "All region analysis type (e.g. Minimum) must match across files to calculate summary statistics" in tgui.mw.messagebox.text()
+        tgui.mw.messagebox.accept()
+        del tgui.mw.messagebox
 
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # Summary Statistics Methods
@@ -2236,8 +2259,8 @@ class TestTables:
             filenames.append(filename)
         return filenames
 
-    def setup_artificial_spkcnt(self, tgui, norm_or_cum):
-        tgui.setup_artificial_data(norm_or_cum)
+    def setup_artificial_spkcnt(self, tgui, norm_or_cum, data_type):
+        tgui.setup_artificial_data(norm_or_cum, data_type)
         tgui.set_fake_filename()
         self.reset_spkcnt_options(tgui)
         rec_from = rec_to = None
@@ -2264,7 +2287,7 @@ class TestTables:
                 else:
                     analysed_recs = tgui.mw.stored_tabledata.curve_fitting[file_idx][reg]["data"][rec_from:rec_to+1]
 
-                    if "area_under_curve" in region_col_keys:  # i.e. is this events
+                    if "event_period" in region_col_keys:  # i.e. is this events
                         data = self.get_events_data(analysed_recs, key)
                     else:
                         data = np.array([entry[key] for entry in analysed_recs])

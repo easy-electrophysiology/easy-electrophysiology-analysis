@@ -20,6 +20,8 @@ import glob
 import test_curve_fitting
 import shutil
 
+SPEED = "fast"
+
 class TestBackupOptions:
 
     @pytest.fixture(scope="function")
@@ -27,6 +29,7 @@ class TestBackupOptions:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data("normalised")
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -147,6 +150,7 @@ class TestBackupOptions:
         tgui = GuiTestSetup("artificial_events_one_record")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data("cumulative", analysis_type="events_one_record")
         tgui.raise_mw_and_give_focus()
 

@@ -8,11 +8,17 @@ sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
 sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), "easy_electrophysiology"))
 from easy_electrophysiology.easy_electrophysiology.easy_electrophysiology import MainWindow
-from ephys_data_methods import current_calc
+from ephys_data_methods import current_calc, core_analysis_methods
 from utils import utils
 from setup_test_suite import GuiTestSetup
 import utils_for_testing as test_utils
+import time
+import pandas as pd
+from types import SimpleNamespace
+from slow_vs_fast_settings import get_settings
 os.environ["PYTEST_QT_API"] = "pyside2"
+
+SPEED = "fast"
 
 class TestsKinetics:
     """
@@ -25,6 +31,7 @@ class TestsKinetics:
         tgui = GuiTestSetup("artificial_skinetics")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data(request.param, analysis_type="skinetics")
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -128,10 +135,10 @@ class TestsKinetics:
             plot_data = peak_plot.xData if xdata_or_ydata == "xData" else peak_plot.yData
 
             if sub_data_dict:
-            
+
                 if sub_data_dict["type"] == "subtract":
                     plot_data = plot_data - sub_data_dict["data"]
-                
+
                 elif sub_data_dict["type"] == "half_rise_half_decay":
                     num_spikes = sub_data_dict["data"]
                     rise_data = plot_data[:num_spikes]
@@ -203,127 +210,119 @@ class TestsKinetics:
             self.check_plot(tgui, tgui.clean(test_spike_times[rec]),
                             rec, "peak_plot", "xData")
 
-    def check_skinetics_threshold(self, tgui, analyse_specific_recs, bounds_vm, filenum):
+    def check_skinetics_threshold(self, tgui, rec, analyse_specific_recs, bounds_vm, filenum):
         """
         Check the skinetics threshold s in loaded_file, stored_tabledata and qtTable on the plot all match the test data.
         """
         test_spike_sample_idx, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs,
                                                                                     tgui.adata.spike_sample_idx)
 
-        for rec in range(rec_from, rec_to + 1):
+        test_thr_vm = tgui.adata.resting_vm
+        test_thr_time = tgui.adata.time_array[rec][tgui.clean(test_spike_sample_idx[rec]).astype(int)]
 
-            test_thr_vm = tgui.adata.resting_vm
-            test_thr_time = tgui.adata.time_array[rec][tgui.clean(test_spike_sample_idx[rec]).astype(int)]
+        test_thr_time = self.data_within_bounds(tgui, test_thr_time,
+                                                rec, bounds_vm)
 
-            test_thr_time = self.data_within_bounds(tgui, test_thr_time,
-                                                    rec, bounds_vm)
+        if test_thr_time is False:
+            return
 
-            if test_thr_time is False:
-                continue
+        loaded_file_time = self.get_loaded_file(tgui, "thr", "time", rec)
+        loaded_file_vm = self.get_loaded_file(tgui, "thr", "vm", rec)
 
-            loaded_file_time = self.get_loaded_file(tgui, "thr", "time", rec)
-            loaded_file_vm = self.get_loaded_file(tgui, "thr", "vm", rec)
+        tabledata_time = self.get_stored_tabledata(tgui, "thr", "time", rec, filenum)
+        tabledata_vm = self.get_stored_tabledata(tgui, "thr", "vm", rec, filenum)
 
-            tabledata_time = self.get_stored_tabledata(tgui, "thr", "time", rec, filenum)
-            tabledata_vm = self.get_stored_tabledata(tgui, "thr", "vm", rec, filenum)
+        qtable_vm = self.get_qtable_col_for_select_recs(tgui, "thr", rec, filenum)
 
-            qtable_vm = self.get_qtable_col_for_select_recs(tgui, "thr", rec, filenum)
+        assert (test_thr_time == loaded_file_time).all()
+        assert (test_thr_time == tabledata_time).all()
 
-            assert (test_thr_time == loaded_file_time).all()
-            assert (test_thr_time == tabledata_time).all()
+        assert (test_thr_vm == loaded_file_vm).all()
+        assert (test_thr_vm == tabledata_vm).all()
+        assert (test_thr_vm == qtable_vm).all()
 
-            assert (test_thr_vm == loaded_file_vm).all()
-            assert (test_thr_vm == tabledata_vm).all()
-            assert (test_thr_vm == qtable_vm).all()
+        self.check_plot(tgui, np.tile(test_thr_vm, len(test_thr_time)),
+                        rec, "thr_plot", "yData")
+        self.check_plot(tgui, test_thr_time,
+                        rec, "thr_plot", "xData")
 
-            self.check_plot(tgui, np.tile(test_thr_vm, len(test_thr_time)),
-                            rec, "thr_plot", "yData")
-            self.check_plot(tgui, test_thr_time,
-                            rec, "thr_plot", "xData")
-
-    def check_skinetics_qtable_spike_order(self, tgui, rec_from, rec_to, bounds_vm, filenum):
+    def check_skinetics_qtable_spike_order(self, tgui, rec, bounds_vm, filenum):
         """
         Check the spike order displayed in the table match the true order.
         """
-        for rec in range(rec_from, rec_to + 1):
+        if bounds_vm:
+            spikes_within_bounds = tgui.adata.get_within_bounds_spiketimes(rec, bounds_vm, tgui.time_type)
+            num_spikes = len(spikes_within_bounds)
+            test_spike_nums = np.arange(num_spikes) + 1
+        else:
+            test_spike_nums = np.arange(tgui.adata.spikes_per_rec[rec]) + 1
 
-            if bounds_vm:
-                spikes_within_bounds = tgui.adata.get_within_bounds_spiketimes(rec, bounds_vm, tgui.time_type)
-                num_spikes = len(spikes_within_bounds)
-                test_spike_nums = np.arange(num_spikes) + 1
-            else:
-                test_spike_nums = np.arange(tgui.adata.spikes_per_rec[rec]) + 1
+        qtable_spike_nums = self.get_qtable_col_for_select_recs(tgui, "spike_number", rec, filenum)
+        assert (qtable_spike_nums == test_spike_nums).all()
 
-            qtable_spike_nums = self.get_qtable_col_for_select_recs(tgui, "spike_number", rec, filenum)
-            assert (qtable_spike_nums == test_spike_nums).all()
+        qtable_spike_times = self.get_qtable_col_for_select_recs(tgui, "spike_time", rec, filenum)
+        assert (qtable_spike_times[0] == sorted(qtable_spike_times[0])).all()
 
-            qtable_spike_times = self.get_qtable_col_for_select_recs(tgui, "spike_time", rec, filenum)
-            assert (qtable_spike_times[0] == sorted(qtable_spike_times[0])).all()
-
-    def check_skinetics_peak_and_amplitude(self, tgui, rec_from, rec_to, bounds_vm, filenum):
+    def check_skinetics_peak_and_amplitude(self, tgui, rec, bounds_vm, filenum):
         """
         Check the peaks and amplitudes in loaded_file, stored_tabledata and qtTable on the plot all match the test data.
         """
-        for rec in range(rec_from, rec_to + 1):
+        test_amplitudes = tgui.adata.all_true_peaks[rec] - tgui.adata.resting_vm
+        test_peaks = tgui.adata.all_true_peaks[rec]
 
-            test_amplitudes = tgui.adata.all_true_peaks[rec] - tgui.adata.resting_vm
-            test_peaks = tgui.adata.all_true_peaks[rec]
+        test_amplitudes = self.data_within_bounds(tgui, test_amplitudes, rec, bounds_vm)
+        test_peaks = self.data_within_bounds(tgui, test_peaks, rec, bounds_vm)
 
-            test_amplitudes = self.data_within_bounds(tgui, test_amplitudes, rec, bounds_vm)
-            test_peaks = self.data_within_bounds(tgui, test_peaks, rec, bounds_vm)
+        if test_amplitudes is False:
+            return
 
-            if test_amplitudes is False:
-                continue
+        loaded_file_amplitudes = self.get_loaded_file(tgui, "amplitude", "vm", rec)
+        loaded_file_peaks = self.get_loaded_file(tgui, "peak", "vm", rec)
 
-            loaded_file_amplitudes = self.get_loaded_file(tgui, "amplitude", "vm", rec)
-            loaded_file_peaks = self.get_loaded_file(tgui, "peak", "vm", rec)
+        tabledata_amplitudes = self.get_stored_tabledata(tgui, "amplitude", "vm", rec, filenum)
+        tabledata_peaks = self.get_stored_tabledata(tgui, "peak", "vm", rec, filenum)
 
-            tabledata_amplitudes = self.get_stored_tabledata(tgui, "amplitude", "vm", rec, filenum)
-            tabledata_peaks = self.get_stored_tabledata(tgui, "peak", "vm", rec, filenum)
+        qtable_amplitudes = self.get_qtable_col_for_select_recs(tgui, "amplitude", rec, filenum)
+        qtable_peaks = self.get_qtable_col_for_select_recs(tgui, "peak", rec, filenum)
 
-            qtable_amplitudes = self.get_qtable_col_for_select_recs(tgui, "amplitude", rec, filenum)
-            qtable_peaks = self.get_qtable_col_for_select_recs(tgui, "peak", rec, filenum)
+        assert utils.allclose(test_amplitudes, loaded_file_amplitudes, 1e-10)
+        assert utils.allclose(test_peaks, loaded_file_peaks, 1e-10)
 
-            assert utils.allclose(test_amplitudes, loaded_file_amplitudes, 1e-10)
-            assert utils.allclose(test_peaks, loaded_file_peaks, 1e-10)
+        assert utils.allclose(test_amplitudes, tabledata_amplitudes, 1e-10)
+        assert utils.allclose(test_peaks, tabledata_peaks, 1e-10)
 
-            assert utils.allclose(test_amplitudes, tabledata_amplitudes, 1e-10)
-            assert utils.allclose(test_peaks, tabledata_peaks, 1e-10)
+        assert utils.allclose(test_amplitudes, qtable_amplitudes, 1e-10)
+        assert utils.allclose(test_peaks, qtable_peaks, 1e-10)
 
-            assert utils.allclose(test_amplitudes, qtable_amplitudes, 1e-10)
-            assert utils.allclose(test_peaks, qtable_peaks, 1e-10)
+        self.check_plot(tgui, test_peaks,
+                        rec, "peak_plot", "yData")
 
-            self.check_plot(tgui, test_peaks,
-                            rec, "peak_plot", "yData")
-
-    def check_skinetics_half_widths(self, tgui, rec_from, rec_to, bounds_vm, filenum):
+    def check_skinetics_half_widths(self, tgui, rec, bounds_vm, filenum):
         """
         Check the half_widths in loaded_file, stored_tabledata and qtTable on the plot all match the test data.
         """
         test_half_widths = tgui.adata.get_times_paramteres("half_width", bounds_vm=bounds_vm, time_type=tgui.time_type)
 
-        for rec in range(rec_from, rec_to + 1):
+        if bounds_vm:
+            if not np.any(test_half_widths[rec]):
+                return
 
-            if bounds_vm:
-                if not np.any(test_half_widths[rec]):
-                    continue
+        loaded_file_half_widths = self.get_loaded_file(tgui, "fwhm", "fwhm_ms", rec) / 1000
+        self.assert_within_a_ts(test_half_widths[rec], loaded_file_half_widths, tgui.adata.ts)
 
-            loaded_file_half_widths = self.get_loaded_file(tgui, "fwhm", "fwhm_ms", rec) / 1000
-            self.assert_within_a_ts(test_half_widths[rec], loaded_file_half_widths, tgui.adata.ts)
+        tabledata_half_widths = self.get_stored_tabledata(tgui, "fwhm", "fwhm_ms", rec, filenum) / 1000
+        self.assert_within_a_ts(test_half_widths[rec], tabledata_half_widths, tgui.adata.ts)
 
-            tabledata_half_widths = self.get_stored_tabledata(tgui, "fwhm", "fwhm_ms", rec, filenum) / 1000
-            self.assert_within_a_ts(test_half_widths[rec], tabledata_half_widths, tgui.adata.ts)
+        qtable_half_widths = self.get_qtable_col_for_select_recs(tgui, "fwhm", rec, filenum) / 1000
+        self.assert_within_a_ts(test_half_widths[rec], qtable_half_widths, tgui.adata.ts)
 
-            qtable_half_widths = self.get_qtable_col_for_select_recs(tgui, "fwhm", rec, filenum) / 1000
-            self.assert_within_a_ts(test_half_widths[rec], qtable_half_widths, tgui.adata.ts)
+        plot_hw_data = self.check_plot(tgui, False,
+                                       rec, "fwhm_plot", "xData", sub_data_dict=dict(type="half_rise_half_decay",
+                                                                                     data=len(test_half_widths[rec])))
 
-            plot_hw_data = self.check_plot(tgui, False,
-                                           rec, "fwhm_plot", "xData", sub_data_dict=dict(type="half_rise_half_decay",
-                                                                                         data=len(test_half_widths[rec])))
+        assert (abs(test_half_widths[rec] - plot_hw_data) < tgui.adata.ts).all()
 
-            assert (abs(test_half_widths[rec] - plot_hw_data) < tgui.adata.ts).all()
-
-    def check_skinetics_ahps(self, tgui, rec_from, rec_to, bounds_vm, filenum):
+    def check_skinetics_ahps(self, tgui, rec, bounds_vm, filenum):
         """
         Check the ahps in loaded_file, stored_tabledata and qtTable on the plot all match the test data. First test the
         actual fahp and mahp value (raw, without thr subtraction) are correct on the loaded_file and stored tabledata.
@@ -332,54 +331,52 @@ class TestsKinetics:
 
         Note that the fahp ahp are further tested with variable start / stop search times in test_fahp_and_ahp_timings()
         """
-        for rec in range(rec_from, rec_to + 1):
+        test_neg_peaks = tgui.adata.all_true_mins[rec]
 
-            test_neg_peaks = tgui.adata.all_true_mins[rec]
+        test_neg_peaks = self.data_within_bounds(tgui, test_neg_peaks, rec, bounds_vm)
 
-            test_neg_peaks = self.data_within_bounds(tgui, test_neg_peaks, rec, bounds_vm)
+        if test_neg_peaks is False:
+            return
 
-            if test_neg_peaks is False:
-                continue
+        loaded_file_fahp = self.get_loaded_file(tgui, "fahp", "vm", rec)
+        loaded_file_mahp = self.get_loaded_file(tgui, "mahp", "vm", rec)
 
-            loaded_file_fahp = self.get_loaded_file(tgui, "fahp", "vm", rec)
-            loaded_file_mahp = self.get_loaded_file(tgui, "mahp", "vm", rec)
+        tabledata_fahp = self.get_stored_tabledata(tgui, "fahp", "vm", rec, filenum)
+        tabledata_mahp = self.get_stored_tabledata(tgui, "mahp", "vm", rec, filenum)
 
-            tabledata_fahp = self.get_stored_tabledata(tgui, "fahp", "vm", rec, filenum)
-            tabledata_mahp = self.get_stored_tabledata(tgui, "mahp", "vm", rec, filenum)
+        assert utils.allclose(test_neg_peaks, loaded_file_fahp, 1e-10)
+        assert utils.allclose(test_neg_peaks, loaded_file_mahp, 1e-10)
 
-            assert utils.allclose(test_neg_peaks, loaded_file_fahp, 1e-10)
-            assert utils.allclose(test_neg_peaks, loaded_file_mahp, 1e-10)
+        assert utils.allclose(test_neg_peaks, tabledata_fahp, 1e-10)
+        assert utils.allclose(test_neg_peaks, tabledata_mahp, 1e-10)
 
-            assert utils.allclose(test_neg_peaks, tabledata_fahp, 1e-10)
-            assert utils.allclose(test_neg_peaks, tabledata_mahp, 1e-10)
+        test_actual_ahp = test_neg_peaks - tgui.adata.resting_vm
 
-            test_actual_ahp = test_neg_peaks - tgui.adata.resting_vm
+        tabledata_actual_fahp = self.get_stored_tabledata(tgui, "fahp", "value", rec, filenum)
+        qtable_actual_fahp = self.get_qtable_col_for_select_recs(tgui, "fahp", rec, filenum)
 
-            tabledata_actual_fahp = self.get_stored_tabledata(tgui, "fahp", "value", rec, filenum)
-            qtable_actual_fahp = self.get_qtable_col_for_select_recs(tgui, "fahp", rec, filenum)
+        tabledata_actual_mahp = self.get_stored_tabledata(tgui, "mahp", "value", rec, filenum)
+        qtable_actual_mahp = self.get_qtable_col_for_select_recs(tgui, "mahp", rec, filenum)
 
-            tabledata_actual_mahp = self.get_stored_tabledata(tgui, "mahp", "value", rec, filenum)
-            qtable_actual_mahp = self.get_qtable_col_for_select_recs(tgui, "mahp", rec, filenum)
+        assert utils.allclose(test_actual_ahp, tabledata_actual_fahp, 1e-10)
+        assert utils.allclose(test_actual_ahp, qtable_actual_fahp, 1e-10)
 
-            assert utils.allclose(test_actual_ahp, tabledata_actual_fahp, 1e-10)
-            assert utils.allclose(test_actual_ahp, qtable_actual_fahp, 1e-10)
+        assert utils.allclose(test_actual_ahp, tabledata_actual_mahp, 1e-10)
+        assert utils.allclose(test_actual_ahp, qtable_actual_mahp, 1e-10)
 
-            assert utils.allclose(test_actual_ahp, tabledata_actual_mahp, 1e-10)
-            assert utils.allclose(test_actual_ahp, qtable_actual_mahp, 1e-10)
-
-            self.check_plot(tgui, test_actual_ahp,
-                            rec, "mahp_plot", "yData", sub_data_dict=dict(type="subtract",
-                                                                          data=tgui.adata.resting_vm))
-            self.check_plot(tgui, test_actual_ahp,
-                            rec, "fahp_plot", "yData", sub_data_dict=dict(type="subtract",
-                                                                          data=tgui.adata.resting_vm))
+        self.check_plot(tgui, test_actual_ahp,
+                        rec, "mahp_plot", "yData", sub_data_dict=dict(type="subtract",
+                                                                      data=tgui.adata.resting_vm))
+        self.check_plot(tgui, test_actual_ahp,
+                        rec, "fahp_plot", "yData", sub_data_dict=dict(type="subtract",
+                                                                      data=tgui.adata.resting_vm))
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Tests
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("analyse_specific_recs", [False, True])
-    @pytest.mark.parametrize("run_with_bounds", [False, True])
+    @pytest.mark.parametrize("analyse_specific_recs", [False, True])  
+    @pytest.mark.parametrize("run_with_bounds", [True, False])
     @pytest.mark.parametrize("spike_detection_method", ["auto_record", "auto_spike", "manual"])
     def test_skinetics_main_results(self, tgui, spike_detection_method, analyse_specific_recs, run_with_bounds):
         """
@@ -394,11 +391,14 @@ class TestsKinetics:
             bounds_vm = tgui.run_artificial_skinetics_analysis(run_with_bounds=run_with_bounds, spike_detection_method=spike_detection_method, override_mahp_fahp_defaults=True)
 
             self.check_spiketimes(tgui, rec_from, rec_to, bounds_vm, filenum)
-            self.check_skinetics_qtable_spike_order(tgui, rec_from, rec_to, bounds_vm, filenum)
-            self.check_skinetics_threshold(tgui, analyse_specific_recs, bounds_vm, filenum)
-            self.check_skinetics_peak_and_amplitude(tgui, rec_from, rec_to, bounds_vm, filenum)
-            self.check_skinetics_half_widths(tgui, rec_from, rec_to, bounds_vm, filenum)
-            self.check_skinetics_ahps(tgui, rec_from, rec_to, bounds_vm, filenum)
+
+            for rec in range(rec_from, rec_to + 1):
+                self.check_skinetics_qtable_spike_order(tgui, rec, bounds_vm, filenum)
+
+                self.check_skinetics_threshold(tgui, rec, analyse_specific_recs, bounds_vm, filenum)
+                self.check_skinetics_peak_and_amplitude(tgui, rec, bounds_vm, filenum)
+                self.check_skinetics_half_widths(tgui, rec, bounds_vm, filenum)
+                self.check_skinetics_ahps(tgui, rec, bounds_vm, filenum)
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
             tgui.setup_artificial_data("cumulative", analysis_type="skinetics")
@@ -569,7 +569,7 @@ class TestsKinetics:
             assert utils.allclose(rec_decay_y_datas[rec], plot_decay_y_data,  1e-06)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Test Manual Selection / Deletetion
+# Test Manual Selection / Deletion
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def test_manual_selection_and_deletion(self, tgui):
@@ -591,8 +591,7 @@ class TestsKinetics:
                 inserted_spike_data[key] = []
 
             # Select Spikes
-            for spikes_to_select in [[0, 0], [0, 1], [0, 2], [3, 0],
-                                     [6, 0], [6, 1], [8, 0], [9, 0]]:
+            for spikes_to_select in get_settings(tgui.speed, tgui.analysis_type)["manually_sel"]:
 
                 rec, rec_spike_idx = spikes_to_select
                 tgui.mw.update_displayed_rec(rec)
@@ -604,15 +603,15 @@ class TestsKinetics:
                     inserted_spike_data[key].append(spike_params[key])
 
             # Delete a subset of selected spikes
-            for spikes_deleted, spikes_to_delete in enumerate([[0, 1, 1], [3, 0, 3], [6, 1, 5]]):
+            for spikes_deleted, spikes_to_delete in enumerate(get_settings(tgui.speed, tgui.analysis_type)["manually_del"]):
 
                 rec, rec_spike_idx, list_spike_idx = spikes_to_delete
                 tgui.mw.update_displayed_rec(rec)
-
+                
                 tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"],
                                               rec_spike_idx, doubleclick_to_delete=True)
-                for key in skinetics_keys:
 
+                for key in skinetics_keys:
                     inserted_spike_data[key].pop(list_spike_idx - spikes_deleted)  # iterate from early idx to higher, so delete higher idx each time one is popped
 
                     table_data = self.get_qtable_col_for_select_recs(tgui, key, rec=None, filenum=filenum)
@@ -708,3 +707,688 @@ class TestsKinetics:
         vms = tgui.adata.vm_array[rec][idx]
 
         return np.min(vms, axis=1)
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------
+# Phase Plot Analysis Tests
+# ----------------------------------------------------------------------------------------------------------------------------------------------
+
+# Test Scrolling -------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("analyse_specific_recs", [False, True])
+    def test_phase_plot_spike_scrolling(self, tgui, analyse_specific_recs):
+        """
+        Scroll through all spikes and check the correct number is there and they are not skipped. Run only with analyse / not analyse specific recs.
+        Bouunds etc. are tested below
+        """
+        __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
+
+        for filenum in range(3):
+
+            tgui.run_artificial_skinetics_analysis(run_with_bounds=False, spike_detection_method="manual", override_mahp_fahp_defaults=True, first_deriv_cutoff=10)
+
+            tgui.left_mouse_click(tgui.mw.mw.phase_space_plots_button)
+            dialog = tgui.mw.dialogs["phase_space_analysis"]
+
+            # Repeatedly push left button to ensure it does not go further
+            # than existing spike
+            for press in range(50):
+                tgui.left_mouse_click(dialog.dia.scroll_left_button)
+                assert dialog.dia.record_spinbox.value() == rec_from + 1
+                assert dialog.dia.action_potential_spinbox.value() == 1
+
+            # start by cycling through each spike,
+            # checking the record and AP box are correct
+            for rec_idx in range(rec_from, rec_to + 1):
+                num_spikes_in_rec = sum(~np.isnan(tgui.adata.peak_times_[rec_idx]))
+                for spike_idx in range(num_spikes_in_rec):
+                    self.press_right_or_left_button_and_check(tgui, dialog, rec_idx, spike_idx, "right")
+
+            # test right to ensure does not go further than existing spike
+            for press in range(50):
+                tgui.left_mouse_click(dialog.dia.scroll_right_button)
+                assert dialog.dia.record_spinbox.value() == rec_to + 1
+                assert dialog.dia.action_potential_spinbox.value() == sum(~np.isnan(tgui.adata.peak_times_[rec_to]))
+
+            # Now cycle back,
+            for rec_idx in reversed(range(rec_from, rec_to + 1)):
+                num_spikes_in_rec = sum(~np.isnan(tgui.adata.peak_times_[rec_idx]))
+                for spike_idx in reversed(range(num_spikes_in_rec)):
+                    self.press_right_or_left_button_and_check(tgui, dialog, rec_idx, spike_idx, "left")
+
+            tgui.mw.mw.actionBatch_Mode_ON.trigger()
+            tgui.setup_artificial_data("cumulative", analysis_type="skinetics")
+
+        tgui.shutdown()
+
+    def press_right_or_left_button_and_check(self, tgui, dialog, rec_idx, spike_idx, left_or_right):
+        button = dialog.dia.scroll_left_button if left_or_right == "left" else dialog.dia.scroll_right_button
+        assert dialog.dia.record_spinbox.value() == rec_idx + 1
+        assert dialog.dia.action_potential_spinbox.value() == spike_idx + 1
+        tgui.left_mouse_click(button)
+        QtWidgets.QApplication.processEvents()
+
+# Test All Analysis ---------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("analyse_specific_recs", [True, False])
+    @pytest.mark.parametrize("run_with_bounds", [True, False])
+    @pytest.mark.parametrize("interp", [True, False])
+    def test_phase_plot_analysis(self, tgui, run_with_bounds, analyse_specific_recs, interp):
+        """
+        Run tests of many aspects of the phase-plot analysis. These are combined to reduce overhead with tear down and avoid duplicate code.
+
+        First, run an skinetics analysis (either with / without bounds, restricted / not restricted). Check that the data displayed on the AP
+        plot on the phase space dialog matches the true data for all AP. Check that the Vm / dVM of this signal matches what is shown
+        on the phase space plot. Check all parameters are calculated correctly. Then the copied data (both from the plot and the copy data button).
+        Finally check the save all data (every file).
+        """
+        __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
+
+        for filenum in range(3):
+
+            bounds_vm = tgui.run_artificial_skinetics_analysis(run_with_bounds=run_with_bounds, spike_detection_method="manual", override_mahp_fahp_defaults=True, first_deriv_cutoff=10)  # TODO: own function
+            dialog, window_samples = self.setup_phase_space_dialog_and_set_windows_samples(tgui)
+
+            if interp:
+                tgui.switch_checkbox(dialog.dia.cubic_spline_interpolate_checkbox, on=True)
+
+            if bounds_vm:
+                test_spike_times = self.get_spiketimes_within_bounds(tgui, rec_from, rec_to, bounds_vm)
+            else:
+                test_spike_times = tgui.adata.peak_times_
+
+            # start by cycling through each spike, checking the record and AP box are correct
+            all_res = []
+            for rec_idx in range(rec_from, rec_to + 1):
+                for ap_idx, peak_time in enumerate(test_spike_times[rec_idx]):
+
+                    if np.isnan(peak_time):
+                        continue
+
+                    peak_idx = self.peak_time_to_idx(tgui, rec_idx, peak_time)
+
+                    res = self.check_and_return_all_spike_and_phase_plot_data(tgui, dialog, rec_idx, ap_idx, peak_idx, peak_time, window_samples, interp=interp)
+
+                    test_headers = self.check_copied_data(tgui, dialog, rec_idx, ap_idx, res)
+
+                    all_res.append([rec_idx, ap_idx, res])
+
+                    QtWidgets.QApplication.processEvents()
+                    tgui.left_mouse_click(dialog.dia.scroll_right_button)
+
+            if not interp:
+                self.check_save_data(tgui, dialog, all_res, test_headers, "excel")  # too big if interp
+
+            self.check_save_data(tgui, dialog, all_res, test_headers, "csv")
+
+            tgui.mw.mw.actionBatch_Mode_ON.trigger()
+            tgui.setup_artificial_data("cumulative", analysis_type="skinetics")
+
+        del dialog
+        tgui.shutdown()
+
+    def test_scrolling_left_sanity_check(self, tgui):
+        """
+        As a quick sanity check, do the same as above (without checking save data) but now scrolling
+        using the left rather than right scroll.
+        """
+        dialog, window_samples = self.setup_for_phase_plot_tests(tgui)
+
+        spikes_in_last_rec = sum(~np.isnan(tgui.adata.peak_times_[tgui.adata.num_recs - 1]))
+        self.set_phase_rec_and_ap(tgui, dialog, tgui.adata.num_recs - 1, spikes_in_last_rec - 1)
+
+        # start by cycling through each spike, checking the record and AP box are correct
+        for rec_idx in reversed(range(tgui.adata.num_recs)):
+
+            ap_idx = len(tgui.adata.peak_times_[rec_idx])
+            for peak_time in reversed(tgui.adata.peak_times_[rec_idx]):  # cant reverse enuemrate object
+                ap_idx -= 1
+                if np.isnan(peak_time):
+                    continue
+
+                peak_idx = self.peak_time_to_idx(tgui, rec_idx, peak_time)
+
+                res = self.check_and_return_all_spike_and_phase_plot_data(tgui, dialog, rec_idx, ap_idx, peak_idx, peak_time, window_samples, interp=False)
+
+                self.check_copied_data(tgui, dialog, rec_idx, ap_idx, res)
+
+                QtWidgets.QApplication.processEvents()
+                tgui.left_mouse_click(dialog.dia.scroll_left_button)
+
+# Testing functions -----------------------------------------------------------------------------------------------------------------------------------------
+
+    def check_and_return_all_spike_and_phase_plot_data(self, tgui, dialog, rec_idx, ap_idx, peak_idx, peak_time, window_samples, interp, use_adata=True):
+        """
+        """
+        file_data = tgui.adata if use_adata else tgui.mw.loaded_file.data
+        spike_x = file_data.time_array[rec_idx][peak_idx - window_samples:peak_idx + window_samples + 1] - file_data.time_array[rec_idx][peak_idx - window_samples]
+        spike_y = file_data.vm_array[rec_idx][peak_idx - window_samples:peak_idx + window_samples + 1]
+
+        # Test AP data and plot
+        assert utils.allclose(spike_x, dialog.time)
+        assert utils.allclose(spike_y, dialog.data)
+
+        assert np.array_equal(spike_x * 1000, dialog.ap_plot.xData)
+        assert np.array_equal(spike_y, dialog.ap_plot.yData)
+
+        test_vm, test_vm_diff, \
+            test_threshold_vm, test_threshold_vdiff, test_vm_max_vm, test_vm_max_vmdiff, \
+            test_dvm_min_vm, test_dvm_min_vmdiff, test_dvm_max_vm, test_dvm_max_vmdiff = self.check_phase_plot_vm_vm_diff_and_all_params(tgui, dialog, spike_y, rec_idx, ap_idx, interp, use_adata)
+
+        res = SimpleNamespace(spike_time=peak_time, spike_x=spike_x, spike_y=spike_y, test_vm=test_vm, test_vm_diff=test_vm_diff, test_threshold_vm=test_threshold_vm,
+                              test_threshold_vdiff=test_threshold_vdiff, test_vm_max_vm=test_vm_max_vm, test_vm_max_vmdiff=test_vm_max_vmdiff,
+                              test_dvm_min_vm=test_dvm_min_vm, test_dvm_min_vmdiff=test_dvm_min_vmdiff, test_dvm_max_vm=test_dvm_max_vm, test_dvm_max_vmdiff=test_dvm_max_vmdiff)
+        return res
+
+    def check_save_data(self, tgui, dialog, all_res, test_headers, csv_or_excel):
+        """
+        Check the save data CSV or excel. When this button is pressed, all AP in the file are analysed
+        and saved in csv / excel. Here use all_res ('all_results') which is the test data generated by
+        looping through all APs. We compare this to the saved data.
+
+        the dialog.save_data() function has a file overwrite option to avoid having to use keyboard to
+        write into the file saving dialog.
+        """
+        file_path = tgui.test_base_dir + "/test_save_phase_analysis"
+
+        if csv_or_excel == "csv":
+            filename = (file_path + ".csv", 'CSV (*.csv)')
+            load_func = pd.read_csv
+        elif csv_or_excel == "excel":
+            filename = (file_path + ".xlsx", 'Excel (*.xlsx)')
+            load_func = pd.read_excel
+
+        if os.path.isfile(filename[0]):
+            os.remove(filename[0])
+
+        dialog.save_data(filename=filename)
+
+        tgui.wait_for_other_thread(30)
+        test_saved_data = load_func(filename[0])
+
+        assert np.shape(test_saved_data)[0] == len(all_res)
+        assert test_saved_data.columns.to_list() == test_headers
+
+        for row_idx, res in enumerate(all_res):  # loop through every AP in the file and check against test
+            spike_info = test_saved_data.iloc[row_idx, :].to_numpy()
+            test_spike_info = self.res_to_spike_info(rec_idx=res[0], ap_idx=res[1], res=res[2])
+            assert utils.allclose(spike_info, test_spike_info)
+
+    def check_copied_data(self, tgui, dialog, rec_idx, ap_idx, res):
+        """
+        Check data copied from both the copy data button (includes all data / params) and the phase plot
+        (copies parameters only). Check the headers and data are correct.
+        """
+        first_headers = ["Record", "Spike", "Spike Time (s)"]
+        last_headers = ["Threshold Vm (mV)"] + ["Threshold dVm (mV/ms)"] + ["Vm Max Vm (mV)"] + ["Vm Max dVm (mV/ms)"] + ["dVm Max Vm (mV)"] + ["dVm Max dVm (mV/ms)"] + ["dVm Min Vm (mV)"] + ["dVm Min dVm (mV/ms)"]
+
+        # Test the main copy button
+        tgui.left_mouse_click(dialog.dia.copy_data_button)
+        copied_data = pd.read_clipboard(header=None)
+
+        test_copied_data = self.res_to_spike_info(rec_idx, ap_idx, res)
+
+        test_headers = first_headers + \
+                       ["Spike Timepoint (s) " + str(idx) for idx in range(len(res.spike_x))] + ["Spike Vm (mV) " + str(idx) for idx in range(len(res.spike_y))] + \
+                       ["Phase Vm (mV) " + str(idx) for idx in range(len(res.test_vm))] + ["Phase dVm (mV/ms) " + str(idx) for idx in range(len(res.test_vm_diff))] \
+                       + last_headers
+
+        assert copied_data.iloc[:, 0].to_list() == test_headers
+        assert utils.allclose(copied_data.iloc[:, 1].to_numpy(), test_copied_data)
+
+        # Also test the copy button on the phase plot
+        self.check_copy_phase_plot_params(dialog, rec_idx, ap_idx, res, first_headers + last_headers)
+
+        return test_headers  # used for saved data test
+
+    def check_copy_phase_plot_params(self, dialog, rec_idx, ap_idx, res, plot_copy_headers):
+        """"""
+        dialog.copy_plot_data_action.trigger()
+        copied_data = pd.read_clipboard(header=None)
+
+        assert copied_data.iloc[:, 0].to_list() == plot_copy_headers
+        assert utils.allclose(copied_data.iloc[:, 1], self.res_to_spike_info(rec_idx, ap_idx, res, parameters_only=True))
+
+    def check_phase_plot_vm_vm_diff_and_all_params(self, tgui, dialog, spike_y, rec_idx, ap_idx, interp, use_adata=True):
+        """
+        Check that the data on the phase dialog plot matches vm / vm_diff data calculated here from the true data (spike_y)
+        """
+        test_vm, test_vm_diff = self.calculate_test_vm_and_vm_diff(spike_y, tgui.mw.loaded_file.data.ts)
+
+        if interp:
+            test_vm_diff = core_analysis_methods.interpolate_data(test_vm_diff, np.arange(len(test_vm)), "cubic", 100, 0)
+            test_vm = core_analysis_methods.interpolate_data(test_vm, np.arange(len(test_vm)), "cubic", 100, 0)
+
+        assert np.array_equal(test_vm, dialog.vm)
+        assert np.array_equal(test_vm_diff, dialog.vm_diff)
+
+        assert np.array_equal(test_vm, dialog.phase_plot.xData)
+        assert np.array_equal(test_vm_diff, dialog.phase_plot.yData)
+
+        test_threshold_vm, test_threshold_vdiff, test_vm_max_vm, test_vm_max_vmdiff, \
+        test_dvm_min_vm, test_dvm_min_vmdiff, test_dvm_max_vm, test_dvm_max_vmdiff = self.get_and_test_phase_plot_parameters(tgui, rec_idx, ap_idx, dialog, test_vm, test_vm_diff, interp, use_adata)
+
+        return test_vm, test_vm_diff, \
+               test_threshold_vm, test_threshold_vdiff, test_vm_max_vm, test_vm_max_vmdiff, \
+               test_dvm_min_vm, test_dvm_min_vmdiff, test_dvm_max_vm, test_dvm_max_vmdiff
+
+
+    def get_and_test_phase_plot_parameters(self, tgui, rec_idx, ap_idx, dialog, test_vm, test_vm_diff, interp, use_adata=True):
+        """
+        Test all phase-plot parameters against those shown on the plot. Return them so they can be compared in the copy / save tests.
+        """
+        # threshold
+        idx = np.min(np.nonzero(test_vm_diff > dialog.threshold_cutoff)[0])
+        test_threshold_vm = test_vm[idx]
+        test_threshold_vdiff = test_vm_diff[idx]
+
+        assert test_threshold_vm == dialog.scatter_threshold.xData
+        assert test_threshold_vdiff == dialog.scatter_threshold.yData
+
+        if not interp and use_adata:  # interp will not match real data as not interp
+            assert test_threshold_vm == tgui.adata.vm_array[rec_idx][int(tgui.adata.spike_sample_idx[rec_idx][ap_idx])]
+
+        # Vm max
+        idx = np.argmax(test_vm)
+        test_vm_max_vm = test_vm[idx]
+        test_vm_max_vmdiff = test_vm_diff[idx]
+        assert dialog.scatter_vmax.xData == test_vm_max_vm
+        assert dialog.scatter_vmax.yData == test_vm_max_vmdiff
+
+        # dVm min
+        idx = np.argmin(test_vm_diff)
+        test_dvm_min_vm = test_vm[idx]
+        test_dvm_min_vmdiff = test_vm_diff[idx]
+        assert dialog.scatter_vdiff_min.xData == test_dvm_min_vm
+        assert dialog.scatter_vdiff_min.yData == test_dvm_min_vmdiff
+
+        # dVm max
+        idx = np.argmax(test_vm_diff)
+        test_dvm_max_vm = test_vm[idx]
+        test_dvm_max_vmdiff = test_vm_diff[idx]
+        assert dialog.scatter_vdiff_max.xData == test_dvm_max_vm
+        assert dialog.scatter_vdiff_max.yData == test_dvm_max_vmdiff
+
+        return test_threshold_vm, test_threshold_vdiff, test_vm_max_vm, test_vm_max_vmdiff, \
+               test_dvm_min_vm, test_dvm_min_vmdiff, test_dvm_max_vm, test_dvm_max_vmdiff
+
+# Test Phase Utils ------------------------------------------------------------------------------------------------------------------------------
+
+    def peak_time_to_idx(self, tgui, rec_idx, peak_time):
+        """
+        Convert the time of a peak to its index in the data
+        """
+        peak_time = peak_time - tgui.mw.loaded_file.data.time_array[rec_idx][0]
+        peak_idx = core_analysis_methods.quick_get_time_in_samples(tgui.mw.loaded_file.data.ts, peak_time).astype('int')
+        return peak_idx
+
+    def res_to_spike_info(self, rec_idx, ap_idx, res, parameters_only=False):
+        """
+        Convert the res results output of check_and_return_all_spike_and_phase_plot_data() to an array
+        so it can be copied with copied data.
+        """
+        if parameters_only:
+            return np.hstack([rec_idx + 1, ap_idx + 1, res.spike_time,
+                              res.test_threshold_vm, res.test_threshold_vdiff, res.test_vm_max_vm, res.test_vm_max_vmdiff,
+                              res.test_dvm_max_vm, res.test_dvm_max_vmdiff, res.test_dvm_min_vm, res.test_dvm_min_vmdiff])
+        else:
+            return np.hstack([rec_idx + 1, ap_idx + 1, res.spike_time,
+                              res.spike_x, res.spike_y, res.test_vm, res.test_vm_diff, res.test_threshold_vm, res.test_threshold_vdiff,
+                              res.test_vm_max_vm, res.test_vm_max_vmdiff, res.test_dvm_max_vm, res.test_dvm_max_vmdiff, res.test_dvm_min_vm, res.test_dvm_min_vmdiff])
+
+    def calculate_test_vm_and_vm_diff(self, spike_y, ts):
+        """"""
+        test_vm = spike_y[:-1]
+        test_vm_diff = np.diff(spike_y) / (ts * 1000)
+        return test_vm, test_vm_diff
+
+    def set_and_get_phase_analysis_window_samples(self, tgui, dialog, window_ms):
+        """"""
+        tgui.enter_number_into_spinbox(dialog.dia.window_size_spinbox_left,
+                                       window_ms)
+        tgui.enter_number_into_spinbox(dialog.dia.window_size_spinbox_right,
+                                       window_ms)
+        window_samples = round(window_ms / (tgui.mw.loaded_file.data.ts * 1000))
+
+        return window_samples
+
+    def setup_for_phase_plot_tests(self, tgui, run_with_bounds=False, spike_detection_method="auto", override_mahp_fahp_defaults=True, first_deriv_cutoff=10, thr_search_region=2, window_ms=2):
+        """"""
+        tgui.run_artificial_skinetics_analysis(run_with_bounds=run_with_bounds, spike_detection_method=spike_detection_method, override_mahp_fahp_defaults=override_mahp_fahp_defaults,
+                                               first_deriv_cutoff=first_deriv_cutoff, thr_search_region=thr_search_region)  # TODO: own function
+        dialog, window_samples = self.setup_phase_space_dialog_and_set_windows_samples(tgui, window_ms)
+
+        return dialog, window_samples
+
+    def setup_phase_space_dialog_and_set_windows_samples(self, tgui, windows_ms=1.5):
+        """"""
+        tgui.left_mouse_click(tgui.mw.mw.phase_space_plots_button)
+        dialog = tgui.mw.dialogs["phase_space_analysis"]
+        window_samples = self.set_and_get_phase_analysis_window_samples(tgui, dialog, window_ms=windows_ms)
+        return dialog, window_samples
+
+# Test Graph Viewing Options ------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("window_ms", [1.5, 1])
+    def test_analysis_random_window_sizes_and_spikes(self, tgui, window_ms):
+        """
+        Do a less thorough test (not testing save data here) testing randomly selected APs (i.e. in a random order)
+        just to check in case of any issues that were not observed just scrolling every AP. Also, test with a few different
+        window sizes just in case (these must always be small enough to only include 1 AP).
+        """
+        if tgui.time_type == "cumulative":
+            return
+
+        for filenum in range(3):
+
+            dialog, window_samples = self.setup_for_phase_plot_tests(tgui, window_ms=window_ms)
+
+            for __ in range(20):
+                rec_idx, ap_idx, peak_time = self.get_random_rec_and_ap_idx_and_set_on_phase_dialog(tgui, dialog)
+
+                peak_idx = self.peak_time_to_idx(tgui, rec_idx, peak_time)
+
+                res = self.check_and_return_all_spike_and_phase_plot_data(tgui, dialog, rec_idx, ap_idx, peak_idx, peak_time, window_samples, interp=False)
+
+                self.check_copied_data(tgui, dialog, rec_idx, ap_idx, res)
+
+                QtWidgets.QApplication.processEvents()
+
+            tgui.mw.mw.actionBatch_Mode_ON.trigger()
+            tgui.setup_artificial_data("cumulative", analysis_type="skinetics")
+        tgui.shutdown()
+
+    def test_phase_plots_line_thickness(self, tgui):
+        """
+        Test the line thickness on the plot changes when the spinbox is changed.
+        """
+        dialog, __ = self.setup_for_phase_plot_tests(tgui)
+
+        assert dialog.ap_plot.opts["pen"].widthF() == 1
+        assert dialog.phase_plot.opts["pen"].widthF() == 1
+
+        tgui.enter_number_into_spinbox(dialog.dia.pen_width_spinbox, 0.5)
+        assert dialog.ap_plot.opts["pen"].widthF() == 0.5
+        assert dialog.phase_plot.opts["pen"].widthF() == 0.5
+
+        tgui.enter_number_into_spinbox(dialog.dia.pen_width_spinbox, 1.2)
+        assert dialog.ap_plot.opts["pen"].widthF() == 1.2
+        assert dialog.phase_plot.opts["pen"].widthF() == 1.2
+
+    def test_phase_plots_grid(self, tgui):
+        """
+        Check the plot gridlines change when the button is click / unclick.
+        """
+        dialog, __ = self.setup_for_phase_plot_tests(tgui)
+
+        self.check_grid_on_or_off(dialog, on=True)
+
+        tgui.switch_checkbox(dialog.dia.show_grid_checkbox, on=False)
+
+        self.check_grid_on_or_off(dialog, on=False)
+
+        tgui.switch_checkbox(dialog.dia.show_grid_checkbox, on=True)
+
+        self.check_grid_on_or_off(dialog, on=True)
+
+    def check_grid_on_or_off(self, dialog, on):
+        """"""
+        val = 80 if on else 0
+
+        ap_plot = dialog.action_potential_plot_class.plot
+        phase_plot = dialog.phase_plot_class.plot
+
+        assert ap_plot.getAxis("left").grid == val
+        assert ap_plot.getAxis("bottom").grid == val
+        assert phase_plot.getAxis("left").grid == val
+        assert phase_plot.getAxis("bottom").grid == val
+
+    def get_random_rec_and_ap_idx_and_set_on_phase_dialog(self, tgui, dialog):
+        """
+        Get a randomly selected AP and change the phase plot rec / ap spinboxes
+        to select it
+        """
+        rec_idx = np.random.randint(low=0, high=tgui.adata.num_recs)
+        num_spikes_in_rec = len(tgui.mw.loaded_file.skinetics_data[rec_idx])
+        ap_idx = np.random.randint(low=0, high=num_spikes_in_rec)
+
+        rec_peak_times = list(tgui.mw.loaded_file.skinetics_data[rec_idx].keys())
+        peak_time = float(rec_peak_times[ap_idx])
+
+        self.set_phase_rec_and_ap(tgui, dialog, rec_idx, ap_idx)
+
+        return rec_idx, ap_idx, peak_time
+
+
+# Threshold --------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("threshold_cutoff", [10, 20, 30])
+    def test_threshold_matches_raw_data(self, tgui, threshold_cutoff):
+        """
+        Another check on the threshold calculated in the AP phase plot. Scroll though all AP and check the
+        threshold as calculated from the phase plot matches the threshold calculated using the standard
+        method (if first deriv threshold is used, these should match exactly).
+        """
+        tgui.load_a_filetype("current_clamp")
+
+        dialog, window_samples = self.setup_for_phase_plot_tests(tgui, first_deriv_cutoff=threshold_cutoff)
+
+        tgui.enter_number_into_spinbox(dialog.dia.threshold_cutoff_spinbox, threshold_cutoff)
+
+        for rec_idx in range(tgui.mw.loaded_file.data.num_recs):
+
+            if tgui.mw.loaded_file.skinetics_data[rec_idx] in [0, []]:
+                continue
+
+            for ap_idx in range(len(tgui.mw.loaded_file.skinetics_data[rec_idx].keys())):
+
+                rec_data = tgui.mw.loaded_file.skinetics_data[rec_idx]
+
+                # test threshold matches analysis
+                analysis_thr = rec_data[list(rec_data.keys())[ap_idx]]["thr"]["vm"]
+                assert analysis_thr == dialog.scatter_threshold.xData
+
+                # test Vm max (i.e. peak) matches analysis
+                analysis_peak = rec_data[list(rec_data.keys())[ap_idx]]["peak"]["vm"]
+                assert analysis_peak == dialog.scatter_vmax.xData
+
+                QtWidgets.QApplication.processEvents()
+                tgui.left_mouse_click(dialog.dia.scroll_right_button)
+
+# Test Phase Plots with Manual Selection / Deletion ----------------------------------------------------------------------------------------------- TODO: also test re-analysis
+
+    def test_manual_deleting_spikes(self, tgui):
+        """
+        Check the phase plot dialog propery updates when a AP is manually deleted. Delete spikes and check GUI
+        is properly updated.
+        """
+        tgui.load_a_filetype("current_clamp")
+        dialog, window_samples = self.setup_for_phase_plot_tests(tgui)
+
+        rec_idx = 4
+        ap_idx = 3
+
+        tgui.mw.update_displayed_rec(rec_idx)
+        self.set_phase_rec_and_ap(tgui, dialog, rec_idx, ap_idx)
+
+        # get all spike times
+        rec_4_times = np.sort(list(tgui.mw.loaded_file.skinetics_data[rec_idx].keys())).astype(np.float64)
+
+        # check 4
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx, window_samples)
+        assert peak_time == rec_4_times[ap_idx]
+
+        # del 4
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], ap_idx, doubleclick_to_delete=True)
+
+        # check now selected spike is next spike along
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx, window_samples)
+        assert peak_time == rec_4_times[ap_idx + 1]
+
+        # scroll left 1 and check spike is 1 before deleted spike
+        tgui.left_mouse_click(dialog.dia.scroll_left_button)
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx - 1, window_samples)
+        assert peak_time == rec_4_times[ap_idx - 1]
+
+        # delete to end and check last spike is shown
+        for __ in range(10):  # delete all spikes until only 1 left
+            tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, 0, window_samples)
+        assert peak_time == rec_4_times[-1]
+
+        # scroll to next re, check and delete the first spike
+        tgui.left_mouse_click(dialog.dia.scroll_right_button)
+        assert dialog.dia.record_spinbox.value() == rec_idx + 2
+        assert dialog.dia.action_potential_spinbox.value() == 1
+
+        rec_5_times = np.sort(list(tgui.mw.loaded_file.skinetics_data[rec_idx + 1].keys())).astype(np.float64)
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx + 1, 0, window_samples)
+        assert peak_time == rec_5_times[0]
+
+        tgui.mw.update_displayed_rec(rec_idx + 1)
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx + 1, 0, window_samples)
+        assert peak_time == rec_5_times[1]
+
+        # now go to the record before, check and delete the last spike
+        tgui.left_mouse_click(dialog.dia.scroll_left_button)
+        tgui.left_mouse_click(dialog.dia.scroll_left_button)
+
+        # check the last spike
+        rec_3_times = np.sort(list(tgui.mw.loaded_file.skinetics_data[rec_idx - 1].keys())).astype(np.float64)
+        assert dialog.dia.record_spinbox.value() == rec_idx  # rec_idx = rec_num - 1 (i.e. the num of the rec before)
+        assert dialog.dia.action_potential_spinbox.value() == len(rec_3_times)
+
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx -1, len(rec_3_times) -1, window_samples)
+        assert peak_time == rec_3_times[-1]
+
+        # delete the last spike
+        tgui.mw.update_displayed_rec(rec_idx - 1)
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], len(rec_3_times) - 1, doubleclick_to_delete=True)
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx - 1, 0, window_samples) # auto goes to first spike
+        assert peak_time == rec_3_times[0]
+
+        # how go back, check and delete the final spike
+        tgui.mw.update_displayed_rec(rec_idx)
+        self.set_phase_rec_and_ap(tgui, dialog, rec_idx, 0)
+
+        peak_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, 0, window_samples)  # auto goes to first spike
+        assert peak_time == rec_4_times[-1]
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+
+        assert dialog.dia.record_spinbox.value() == rec_idx  # rec_idx = rec_num - 1 (i.e. the num of the rec before)
+        assert dialog.dia.action_potential_spinbox.value() == 1
+        self.quick_check_displayed_spike(tgui, dialog, rec_idx - 1, 0, window_samples)  # auto goes to first spike
+
+    def test_manual_deleting_all_spikes(self, tgui):
+        """
+        Delete evry single spike and check the GUI shows warning and closes
+        """
+        tgui.load_a_filetype("current_clamp")
+
+        dialog, window_samples = self.setup_for_phase_plot_tests(tgui)
+
+        for rec, rec_data in enumerate(tgui.mw.loaded_file.skinetics_data):
+            tgui.mw.update_displayed_rec(rec)
+
+            if rec_data in [0, {}]:
+                continue
+            else:
+                num_spikes = len(rec_data)
+
+            for ap_idx in range(num_spikes):
+                if rec == len(tgui.mw.loaded_file.skinetics_data) - 1 and ap_idx == num_spikes - 1: # stop before the very last spike
+                    break
+                tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+                if ap_idx != num_spikes - 1:
+                    self.quick_check_displayed_spike(tgui, dialog, rec, 0, window_samples)  # cant test when all spieks in rec deleted
+
+        QtCore.QTimer.singleShot(2500, lambda: self.check_last_spike_messagebox(tgui))
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+
+        assert tgui.mw.dialogs["phase_space_analysis"] is None
+
+    def test_manually_selecting_spikes(self, tgui):
+        """
+        Manually select a spike and check the GUI updates properly
+        """
+        tgui.load_a_filetype("current_clamp")
+
+        # restrict to certain recs so that an AP outside of analysed range can be selected
+        tgui.analysis_type = "None"
+        tgui.rec_from_value = 4
+        tgui.rec_to_value = 5
+        tgui.handle_analyse_specific_recs(analyse_specific_recs=True)
+
+        dialog, window_samples = self.setup_for_phase_plot_tests(tgui)
+
+        # select a spike, check and delete it.
+        rec_idx = 5
+        ap_idx = 0
+        tgui.enter_number_into_spinbox(dialog.dia.record_spinbox, rec_idx + 1)
+        tgui.mw.update_displayed_rec(rec_idx)
+
+        rec_4_times = np.sort(list(tgui.mw.loaded_file.skinetics_data[rec_idx].keys())).astype(np.float64)
+        del_spike_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx, window_samples)  # cant test when all spieks in rec deleted
+        del_spike_peak = tgui.mw.loaded_file.skinetics_data[rec_idx][str(del_spike_time)]["peak"]["vm"]
+
+        tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.skinetics_plot_dict["peak_plot"], 0, doubleclick_to_delete=True)
+
+        # check the spike has updated properly, then select the deleted spike.
+        spike_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx, window_samples)
+        assert spike_time == rec_4_times[1]
+
+        tgui.expand_xaxis_around_peak(tgui, spike_time)
+        tgui.left_mouse_click(tgui.mw.mw.skinetics_click_mode_button)
+        tgui.select_spike_action(del_spike_time, del_spike_peak)
+
+        # check the re-selected spike
+        spike_time = self.quick_check_displayed_spike(tgui, dialog, rec_idx, ap_idx, window_samples)
+        assert spike_time == rec_4_times[0]
+        assert spike_time == del_spike_time
+
+        # select a spike on an un-analysed rec and check it is shown.
+        empty_rec = 6
+        tgui.mw.update_displayed_rec(empty_rec)
+        tgui.select_spike_action(180.5049, 56.427001953125)  # hard coded from known file
+
+        self.set_phase_rec_and_ap(tgui, dialog, 6, 0)
+        self.quick_check_displayed_spike(tgui, dialog, 6, 0, window_samples)
+
+    def test_whole_file_window(self, tgui):
+        """
+        Set the window so large it shows the entire file. Check the data matches.
+        """
+        dialog, __ = self.setup_for_phase_plot_tests(tgui)
+
+        self.set_and_get_phase_analysis_window_samples(tgui, dialog, window_ms=10000)
+
+        assert np.array_equal(tgui.mw.loaded_file.data.time_array[0], dialog.time)
+        assert np.array_equal(tgui.mw.loaded_file.data.vm_array[0], dialog.data)
+        assert np.array_equal(tgui.mw.loaded_file.data.time_array[0] * 1000, dialog.ap_plot.xData)
+        assert np.array_equal(tgui.mw.loaded_file.data.vm_array[0], dialog.ap_plot.yData)
+
+        test_vm, test_vm_diff = self.calculate_test_vm_and_vm_diff(dialog.data, tgui.mw.loaded_file.data.ts)
+
+        assert np.array_equal(test_vm, dialog.vm)
+        assert np.array_equal(test_vm_diff, dialog.vm_diff)
+        assert np.array_equal(test_vm, dialog.phase_plot.xData)
+        assert np.array_equal(test_vm_diff, dialog.phase_plot.yData)
+
+# Manually select spike phase plot test utils -----------------------------------------------------------------------------------------------------------------
+
+    def check_last_spike_messagebox(self, tgui):
+        """ errors from these functions do not propagate! If assert is FAlse need to break in
+        BEFORE assert and change it so correct. Otherwise hangs without closing messagebox"""
+        assert tgui.mw.messagebox.text() == "<p align='center'>There are no analysed action potentials. Phase-plot window will now close.</p>"
+        tgui.mw.messagebox.close()
+
+    def quick_check_displayed_spike(self, tgui, dialog, rec_idx, ap_idx, window_samples):
+        peak_time = float(list(tgui.mw.loaded_file.skinetics_data[rec_idx].keys())[ap_idx])
+        peak_idx = self.peak_time_to_idx(tgui, rec_idx, peak_time)
+        self.check_and_return_all_spike_and_phase_plot_data(tgui, dialog, rec_idx, ap_idx, peak_idx, peak_time, window_samples, interp=False, use_adata=False)
+        return peak_time
+
+    def set_phase_rec_and_ap(self, tgui, dialog, rec_idx, ap_idx):
+        tgui.enter_number_into_spinbox(dialog.dia.record_spinbox, rec_idx + 1)
+        tgui.enter_number_into_spinbox(dialog.dia.action_potential_spinbox, ap_idx + 1)

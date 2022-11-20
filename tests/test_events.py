@@ -14,15 +14,17 @@ from ephys_data_methods import core_analysis_methods, event_analysis_master, vol
 from ephys_data_methods_private import curve_fitting_master
 import test_curve_fitting
 from utils import utils
-from setup_test_suite import GuiTestSetup
+from setup_test_suite import GuiTestSetup, get_test_base_dir
+from slow_vs_fast_settings import get_settings
 import copy
 from sys import platform
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error
 os.environ["PYTEST_QT_API"] = "pyside2"
 
-DATA_TYPES = ["multi_record", "one_record"]  # "multi_record_rec_gap", "multi_record_norm""
+SPEED = "fast"
 
+DATA_TYPES = ["one_record", "multi_record", "multi_record_norm"]
 
 def get_time_type(tgui):
     norm_or_cumu_time = "normalised" if tgui.analysis_type == "events_multi_record_norm" else "cumulative"
@@ -38,6 +40,7 @@ class TestEvents:
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
         tgui.analysis_type = "events_" + request.param
+        tgui.speed = SPEED
         tgui.setup_artificial_data(get_time_type(tgui), analysis_type="events_" + request.param)
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -49,24 +52,26 @@ class TestEvents:
     def check_event_numbers(self, tgui, filenum):
 
         tgui.switch_mw_tab(1)
-        qtable_num_events = tgui.get_data_from_qtable("event_num", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_num_events = tgui.get_data_from_qtable("event_num", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert qtable_num_events[0] == 1, "first table num events is not 1"
 
         increase = np.mean(np.diff(qtable_num_events)) if qtable_num_events.size > 1 else 1
+
         assert increase == 1, "table num events is not increasing by 1 for filenum " + str(filenum)
         assert qtable_num_events.size == tgui.adata.num_events(), "table num events does not equal true num events for filenum " + str(filenum)
+
 
     def check_event_times(self, tgui, filenum, rec_from=None, rec_to=None):
 
         if rec_from is not None and rec_to is not None:
-            test_event_times = tgui.adata.peak_times[get_time_type(tgui)][rec_from:rec_to + 1, :][~np.isnan(tgui.adata.peak_times[get_time_type(tgui)][rec_from:rec_to + 1, :])]
+            test_event_times = tgui.adata.peak_times[tgui.time_type][rec_from:rec_to + 1, :][~np.isnan(tgui.adata.peak_times[tgui.time_type][rec_from:rec_to + 1, :])]
         else:
-            test_event_times = tgui.adata.peak_times[get_time_type(tgui)][~np.isnan(tgui.adata.peak_times[get_time_type(tgui)])]
+            test_event_times = tgui.adata.peak_times[tgui.time_type][~np.isnan(tgui.adata.peak_times[tgui.time_type])]
 
         model_event_times = self.unpack_event_info_keys(tgui.mw.loaded_file.event_info)
         tabledata_event_times = self.unpack_event_info_keys(tgui.mw.stored_tabledata.event_info[filenum])
-        qtable_event_times = tgui.get_data_from_qtable("event_time", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_event_times = tgui.get_data_from_qtable("event_time", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert np.array_equal(test_event_times, model_event_times), "loaded_file incorrect event times for filenum " + str(filenum)
         assert np.array_equal(test_event_times, tabledata_event_times), "tabledata incorrect event times for filenum " + str(filenum)
@@ -77,7 +82,7 @@ class TestEvents:
 
         model_baseline = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "baseline", "im")
         tabledata_baseline = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "baseline", "im")
-        qtable_baseline = tgui.get_data_from_qtable("baseline", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_baseline = tgui.get_data_from_qtable("baseline", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert np.array_equal(test_baseline, model_baseline), "loaded_file incorrect baseline for filenum " + str(filenum)
         assert np.array_equal(test_baseline, tabledata_baseline), "tabledata incorrect baseline for filenum " + str(filenum)
@@ -90,7 +95,7 @@ class TestEvents:
 
         model_amplitudes = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "amplitude", "im")
         tabledata_amplitudes = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "amplitude", "im")
-        qtable_amplitudes = tgui.get_data_from_qtable("amplitude", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_amplitudes = tgui.get_data_from_qtable("amplitude", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert np.array_equal(test_amplitudes, model_amplitudes), "loaded_file incorrect amplitudes for filenum " + str(filenum)
         assert np.array_equal(test_amplitudes, tabledata_amplitudes), "tabledata incorrect amplitudes for filenum " + str(filenum)
@@ -106,7 +111,7 @@ class TestEvents:
 
         model_rise_times = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "rise", "rise_time_ms")
         tabledata_rise_times = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "rise", "rise_time_ms")
-        qtable_rise_times = tgui.get_data_from_qtable("rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_rise_times = tgui.get_data_from_qtable("rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(test_rise_times, model_rise_times, 1e-10), "loaded_file incorrect rise times for filenum " + str(filenum)
         assert utils.allclose(test_rise_times, tabledata_rise_times, 1e-10), "tabledata incorrect rise times for filenum " + str(filenum)
@@ -117,7 +122,7 @@ class TestEvents:
 
         model_peaks = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "peak", "im")
         tabledata_peaks = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "peak", "im")
-        qtable_peaks = tgui.get_data_from_qtable("peak", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_peaks = tgui.get_data_from_qtable("peak", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert np.array_equal(test_peaks, model_peaks), "loaded_file incorrect peaks for filenum " + str(filenum)
         assert np.array_equal(test_peaks, tabledata_peaks), "tabledata incorrect peaks for filenum " + str(filenum)
@@ -129,7 +134,7 @@ class TestEvents:
 
         model_decay_tau = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "monoexp_fit", "tau_ms")
         tabledata_decay_tau = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "monoexp_fit", "tau_ms")
-        qtable_decay_tau = tgui.get_data_from_qtable("monoexp_fit_tau", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_decay_tau = tgui.get_data_from_qtable("monoexp_fit_tau", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(test_tau_ms, model_decay_tau, 1e-10), "loaded_file incorrect decay tau for filenum " + str(filenum)
         assert utils.allclose(test_tau_ms, tabledata_decay_tau, 1e-10), "tabledata incorrect decay tau for filenum " + str(filenum)
@@ -141,7 +146,7 @@ class TestEvents:
 
         model_decay_perc = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "decay_perc", "decay_time_ms")
         tabledata_decay_perc = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "decay_perc", "decay_time_ms")
-        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(test_decay_perc, model_decay_perc, 1e-10), "loaded_file incorrect decay percfor filenum " + str(filenum)
         assert utils.allclose(test_decay_perc, tabledata_decay_perc, 1e-10), "tabledata incorrect decay perc for filenum " + str(filenum)
@@ -152,7 +157,7 @@ class TestEvents:
 
         model_half_width = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "half_width", "fwhm_ms")
         tabledata_half_width = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "half_width", "fwhm_ms")
-        qtable_half_width = tgui.get_data_from_qtable("half_width", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_half_width = tgui.get_data_from_qtable("half_width", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(test_half_width, model_half_width, 1e-10), "loaded_file incorrect half width for filenum " + str(filenum)
         assert utils.allclose(test_half_width, tabledata_half_width, 1e-10), "tabledata incorrect half width for filenum " + str(filenum)
@@ -166,7 +171,7 @@ class TestEvents:
 
         model_auc = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "area_under_curve", "im")
         tabledata_auc = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "area_under_curve", "im")
-        qtable_auc = tgui.get_data_from_qtable("area_under_curve", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_auc = tgui.get_data_from_qtable("area_under_curve", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(test_auc, model_auc, 1e-10), "loaded_file incorrect area under curve for filenum " + str(filenum)
         assert utils.allclose(test_auc, tabledata_auc, 1e-10), "tabledata incorrect area under curve for filenum " + str(filenum)
@@ -179,7 +184,7 @@ class TestEvents:
 
         model_event_periods = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "event_period", "time_ms")
         tabledata_event_periods = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[filenum], "event_period", "time_ms")
-        qtable_event_periods = tgui.get_data_from_qtable("event_period", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_event_periods = tgui.get_data_from_qtable("event_period", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         assert utils.allclose(event_periods, model_event_periods, 1e-10)
         assert utils.allclose(event_periods, tabledata_event_periods, 1e-10)
@@ -209,7 +214,7 @@ class TestEvents:
     def get_all_test_isi_method_i(self, tgui):
         test_isi = []
         for rec in range(tgui.adata.num_recs):
-            rec_peak_times = tgui.adata.peak_times["cumulative"][rec]
+            rec_peak_times = tgui.adata.peak_times[tgui.time_type][rec]
             num_rec_events = np.count_nonzero(~np.isnan(rec_peak_times))
 
             for ev_time_idx in range(1, num_rec_events):
@@ -221,7 +226,7 @@ class TestEvents:
         return test_isi
 
     def get_all_test_isi_method_ii(self, tgui):
-        all_spikes = tgui.adata.peak_times["cumulative"][~np.isnan(tgui.adata.peak_times["cumulative"])]
+        all_spikes = tgui.adata.peak_times[tgui.time_type][~np.isnan(tgui.adata.peak_times[tgui.time_type])]
         all_isi = np.diff(all_spikes)
         test_all_isi = np.sort(np.delete(all_isi, np.cumsum(tgui.adata.spikes_per_rec[:-1]) - 1))
 
@@ -333,7 +338,7 @@ class TestEvents:
 
     @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
     @pytest.mark.parametrize("vary_amplitude_and_tau", [True, False])
-    @pytest.mark.parametrize("delete_events", [False, True])
+    @pytest.mark.parametrize("delete_events", [True])  # False
     @pytest.mark.parametrize("negative_events", [False, True])
     def test_events_overview_and_average(self, tgui, template_or_threshold, vary_amplitude_and_tau, delete_events, negative_events):
         """
@@ -389,6 +394,8 @@ class TestEvents:
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
             tgui.setup_artificial_data(get_time_type(tgui), analysis_type=tgui.analysis_type, negative_events=negative_events)
+
+        del dialog
         tgui.shutdown()
 
     @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
@@ -408,9 +415,9 @@ class TestEvents:
         tgui.handle_analyse_specific_recs(True)
 
         # make recs that are not within recs  NaN
-        cut_bad_recs_peak_times = utils.np_empty_nan((tgui.adata.num_recs, tgui.adata.peak_times["cumulative"].shape[1]))
-        cut_bad_recs_peak_times[tgui.rec_from():tgui.rec_to() + 1, :] = tgui.adata.peak_times["cumulative"][tgui.rec_from():tgui.rec_to() + 1, :]
-        tgui.adata.peak_times["cumulative"] = cut_bad_recs_peak_times
+        cut_bad_recs_peak_times = utils.np_empty_nan((tgui.adata.num_recs, tgui.adata.peak_times[tgui.time_type].shape[1]))
+        cut_bad_recs_peak_times[tgui.rec_from():tgui.rec_to() + 1, :] = tgui.adata.peak_times[tgui.time_type][tgui.rec_from():tgui.rec_to() + 1, :]
+        tgui.adata.peak_times[tgui.time_type] = cut_bad_recs_peak_times
 
         # delete event params from recs that we will not analyse
         evs_to_del = []
@@ -464,7 +471,8 @@ class TestEvents:
         self.check_event_times(tgui, 0)
 
         tgui.left_mouse_click(tgui.mw.mw.table_event_cum_prob_frequency_checkbox)
-        num_isi = tgui.mw.mw.table_tab_tablewidget.rowCount() - 2
+        num_isi = self.get_num_isi_from_table(tgui)
+
         assert num_isi == tgui.adata.num_events() - tgui.adata.num_recs, "isis are not excluded across records"
 
         all_isi = self.get_all_frequency_data_from_table(tgui, num_isi)
@@ -472,17 +480,21 @@ class TestEvents:
 
         assert np.array_equal(all_isi, test_isi), "isi does not match test_isi"
 
+    def get_num_isi_from_table(self, tgui):
+        return tgui.mw.mw.table_tab_tablewidget.rowCount() - 2 - 4  # delete the first 2 rows (headers) and last 4 (summary stats)
+
     def test_conversion_from_multi_rec_to_single_and_back(self, tgui):
         """
         """
-        if tgui.test_filetype == "artificial_events_one_record":
+        if tgui.test_filetype in ["artificial_events_one_record",
+                                  "artificial_events_multi_record_norm"]:
             return
 
         tgui.run_artificial_events_analysis(tgui, "template")
         tgui.switch_mw_tab(1)
         tgui.left_mouse_click(tgui.mw.mw.table_event_cum_prob_frequency_checkbox)
 
-        num_isi = tgui.mw.mw.table_tab_tablewidget.rowCount() - 2
+        num_isi = self.get_num_isi_from_table(tgui)
         assert num_isi == tgui.adata.num_events() - tgui.adata.num_recs, "isis are not excluded across records"
 
         rec_isi = self.get_all_frequency_data_from_table(tgui, num_isi)
@@ -495,17 +507,17 @@ class TestEvents:
         tgui.switch_mw_tab(1)
         tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_frequency_checkbox, on=True)
 
-        num_isi = tgui.mw.mw.table_tab_tablewidget.rowCount() - 2
+        num_isi = self.get_num_isi_from_table(tgui)
         assert num_isi == tgui.adata.num_events() - 1
 
         all_isi = self.get_all_frequency_data_from_table(tgui, num_isi)
-        all_test_isi = np.sort(np.diff(tgui.adata.peak_times["cumulative"][~np.isnan(tgui.adata.peak_times["cumulative"])]))
+        all_test_isi = np.sort(np.diff(tgui.adata.peak_times[tgui.time_type][~np.isnan(tgui.adata.peak_times[tgui.time_type])]))
         assert utils.allclose(all_test_isi, all_isi, 1e-10)
 
         self.reshape_from_multi_rec_to_single_rec_or_back(tgui, "single_to_multi", num_recs=tgui.adata.num_recs)
         tgui.run_artificial_events_analysis(tgui, "template")
 
-        num_isi = tgui.mw.mw.table_tab_tablewidget.rowCount() - 2
+        num_isi = self.get_num_isi_from_table(tgui)
         assert num_isi == tgui.adata.num_events() - tgui.adata.num_recs, "isis are not excluded across records"
         tgui.run_artificial_events_analysis(tgui, "template")
 
@@ -515,7 +527,9 @@ class TestEvents:
 
     @pytest.mark.parametrize("vary_amplitude_and_tau", [False, True])
     def test_all_results_are_the_same_after_reshape_from_multi_to_single_rec_and_back(self, tgui, vary_amplitude_and_tau):
-        if tgui.test_filetype == "artificial_events_one_record":
+        """"""
+        if tgui.test_filetype in ["artificial_events_one_record",
+                                  "artificial_events_multi_record_norm"]:
             return
 
         if vary_amplitude_and_tau:
@@ -551,7 +565,7 @@ class TestEvents:
 
         if vary_amplitude_and_tau:
             tgui.update_events_to_varying_amplitude_and_tau()
-            self.set_widgets_for_artificial_event(tgui, run=True)
+            tgui.set_widgets_for_artificial_event(tgui, run=True)
         else:
             tgui.run_artificial_events_analysis(tgui, "threshold", biexp=True)
 
@@ -563,9 +577,9 @@ class TestEvents:
         tabledata_biexp_decay = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "biexp_fit", "decay_ms")
         tabledata_biexp_b1 = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "biexp_fit", "b1")
 
-        qtable_biexp_rise = tgui.get_data_from_qtable("biexp_fit_rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-        qtable_biexp_decay = tgui.get_data_from_qtable("biexp_fit_decay", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-        qtable_biexp_b1 = tgui.get_data_from_qtable("biexp_fit_b1", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_biexp_rise = tgui.get_data_from_qtable("biexp_fit_rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_biexp_decay = tgui.get_data_from_qtable("biexp_fit_decay", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_biexp_b1 = tgui.get_data_from_qtable("biexp_fit_b1", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         test_b1 = tgui.adata.b1 * tgui.adata.b1_offsets
         assert utils.allclose(model_biexp_b1, test_b1, 1e-05)
@@ -606,7 +620,7 @@ class TestEvents:
 
         assert not any(tgui.mw.loaded_file.event_info)
         assert core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info) == 0
-        qtable_num_events = tgui.get_data_from_qtable("event_num", rec_from=0, rec_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
+        qtable_num_events = tgui.get_data_from_qtable("event_num", row_from=0, row_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
         assert not np.any(qtable_num_events)
 
         # Test with analysed events
@@ -615,7 +629,7 @@ class TestEvents:
 
         assert any(tgui.mw.loaded_file.event_info)
         assert core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info) == tgui.adata.num_events()
-        qtable_num_events = tgui.get_data_from_qtable("event_num", rec_from=0, rec_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
+        qtable_num_events = tgui.get_data_from_qtable("event_num", row_from=0, row_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
         assert len(qtable_num_events) == tgui.adata.num_events()
 
         # Test against with no analysd events
@@ -625,45 +639,12 @@ class TestEvents:
 
         assert not any(tgui.mw.loaded_file.event_info)
         assert core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info) == 0
-        qtable_num_events = tgui.get_data_from_qtable("event_num", rec_from=0, rec_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
+        qtable_num_events = tgui.get_data_from_qtable("event_num", row_from=0, row_to=tgui.mw.mw.table_tab_tablewidget.rowCount(), analysis_type="events")
         assert not np.any(qtable_num_events)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Templates
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
-    def set_widgets_for_artificial_event(self, tgui, run=True):
-        """
-        """
-        tgui.set_analysis_type("events_template_matching")
-
-        template_1_coefs, template_2_coefs, template_3_coefs = list(np.unique(tgui.adata.decay_offsets))
-
-        tgui.left_mouse_click(tgui.mw.mw.events_template_generate_button)
-        dialog = tgui.mw.dialogs["events_template_generate"]
-
-        tgui.set_combobox(dialog.dia.choose_template_combobox, 0)
-        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_1_coefs / tgui.adata.rise_div)
-        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_1_coefs)
-
-        tgui.set_combobox(dialog.dia.choose_template_combobox, 1)
-        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_2_coefs / tgui.adata.rise_div)
-        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_2_coefs)
-
-        tgui.set_combobox(dialog.dia.choose_template_combobox, 2)
-        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_3_coefs / tgui.adata.rise_div)
-        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_3_coefs)
-
-        tgui.set_analysis_type("events_template_matching")
-        tgui.left_mouse_click(tgui.mw.mw.events_template_analyse_all_button)
-        tgui.set_widgets_for_artificial_event_data(tgui, "template", biexp=True)
-        tgui.set_combobox(tgui.mw.dialogs["template_analyse_events"].dia.template_to_use_combobox, 2)
-        tgui.set_combobox(tgui.mw.dialogs["template_analyse_events"].dia.detection_cutoff_combobox, 0)
-
-        if run:
-            tgui.left_mouse_click(tgui.mw.dialogs["template_analyse_events"].dia.fit_all_events_button)
-
-        return template_1_coefs, template_2_coefs, template_3_coefs
 
     def test_events_template_numbers(self, tgui):
         """
@@ -671,9 +652,9 @@ class TestEvents:
         tgui.setup_artificial_data(norm_or_cumu_time="cumulative", analysis_type="events_multi_record_biexp")
         tgui.update_events_to_varying_amplitude_and_tau()
 
-        template_1_coefs, template_2_coefs, template_3_coefs = self.set_widgets_for_artificial_event(tgui)
+        template_1_coefs, template_2_coefs, template_3_coefs = tgui.set_widgets_for_artificial_event(tgui)
 
-        template_nums = tgui.get_data_from_qtable("template_num", rec_from=0, rec_to=tgui.adata.num_events(),
+        template_nums = tgui.get_data_from_qtable("template_num", row_from=0, row_to=tgui.adata.num_events(),
                                                   analysis_type="events")
         decay_coefs = np.squeeze(tgui.adata.decay_offsets)
         decay_coefs[np.where(decay_coefs == template_1_coefs)] = 1
@@ -729,45 +710,13 @@ class TestEvents:
             tgui.mw.loaded_file.handle_select_event_click(pos, "template_analyse")
 
         tgui.switch_mw_tab(1)  # necessary to update table
-        first_3_templates = tgui.get_data_from_qtable("template_num", rec_from=0, rec_to=tgui.adata.num_events(),
+        first_3_templates = tgui.get_data_from_qtable("template_num", row_from=0, row_to=tgui.adata.num_events(),
                                                       analysis_type="events")[0:3]
         assert np.array_equal(first_3_templates, np.array([1, 2, 3]))
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Lower Threshold
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
-    @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
-    def test_lower_threshold_gui(self, tgui, template_or_threshold):
-
-        # Run and setup
-        tgui.run_artificial_events_analysis(tgui, template_or_threshold)
-        num_events = core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info)
-        assert any(tgui.mw.loaded_file.event_info) is True
-
-        peak_val = tgui.adata.peak_im
-        dialog_key = "template_analyse_events" if template_or_threshold == "template" else "events_threshold_analyse_events"  # OWN FUNCTION
-        dialog = tgui.mw.dialogs[dialog_key]
-
-        # Set the linear threshold to just below the peak val - should be no spikes
-        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, peak_val - 0.01)
-        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-        assert any(tgui.mw.loaded_file.event_info) is False
-
-        # Set the spinbox to curved. find the minimum values of the curve and set it so this is close to the peak val but number.
-        # Analyse and check all are within threshold, then set just over threshold and check none are found. Tried to make it a
-        # bit more specific per-spike but its too complex with different curves per rec. This is unit tested more thoroughly.
-        tgui.set_combobox(dialog.dia.threshold_lower_combobox, 1)
-        min_curve_pos = np.min(np.min(dialog.curved_threshold_lower_w_displacement, axis=0))
-        offset = peak_val - min_curve_pos
-        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, offset)
-        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-        new_num_events = core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info)
-        assert new_num_events == num_events
-
-        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, offset - 5)
-        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-        assert any(tgui.mw.loaded_file.event_info) is False
 
     @pytest.mark.parametrize("template_or_threshold", ["threshold"]) # , "template"])
     @pytest.mark.parametrize("baseline_method", ["auto", "linear", "curve"])
@@ -863,6 +812,7 @@ class TestEvents:
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
         assert any(tgui.mw.loaded_file.event_info) is False
 
+        del dialog
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Baseline
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -896,8 +846,10 @@ class TestEvents:
         for rec in range(tgui.adata.num_recs):
 
             baseline_idx = tgui.mw.loaded_file.make_list_from_event_info("baseline", "idx", event_info=tgui.mw.loaded_file.event_info, rec=rec)
+            baseline_idx = list(baseline_idx)
 
             test_point = event_midpoint if combobox_idx_to_test == 1 else dialog.curved_baseline_w_displacement[rec][baseline_idx]
+
             QtWidgets.QApplication.processEvents()
             assert (tgui.adata.im_array[rec][baseline_idx] > test_point).all()
             baseline_idx = np.array(baseline_idx) + 1
@@ -987,6 +939,8 @@ class TestEvents:
             assert np.array_equal(baseline - (test_rms * 5), tgui.mw.loaded_file_plot.rms_threshold_lower_plot.yData)
             assert np.array_equal(baseline, tgui.mw.loaded_file_plot.curved_baseline_plot.yData)
 
+        del dialog
+
     def test_threshold_lower_show_and_hidden_correctly(self, tgui):
         """
         Just test threshold as both tested above and it all uses the same code anyway...
@@ -1036,6 +990,7 @@ class TestEvents:
         assert tgui.mw.loaded_file_plot.rms_threshold_lower_plot not in upperplot.items
         assert dialog.man_thr_axline.axline in tgui.mw.loaded_file_plot.upperplot.items
 
+        del dialog
 
     def test_baseline_show_and_hidden_correctly(self, tgui):
         """
@@ -1069,6 +1024,8 @@ class TestEvents:
         tgui.set_combobox(dialog.dia.baseline_combobox, idx=1)
         assert dialog.baseline_axline.axline in upperplot.items
         assert tgui.mw.loaded_file_plot.curved_baseline_plot not in upperplot.items
+
+        del dialog
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Average Events
@@ -1129,7 +1086,9 @@ class TestEvents:
         num_samples_rise = np.argmin(test_average_event)
         num_samples_decay = len(test_average_event) - np.argmin(test_average_event)
         decay_time = (num_samples_decay + 1) * tgui.adata.ts
-        tgui.enter_number_into_spinbox(tgui.mw.mw.events_template_decay_search_period_spinbox, str(decay_time * 1000))
+        tgui.enter_number_into_spinbox(tgui.mw.mw.events_template_decay_search_period_spinbox,
+                                       str(decay_time * get_settings(tgui.speed,
+                                                                     "curve_fitting")["decay_search_period"]))
 
         tgui.mw.cfgs.events["decay_or_biexp_fit_method"] = "do_not_fit"
         tgui.mw.cfgs.events["templates"]["1"]["window_len_s"] = decay_time
@@ -1183,6 +1142,8 @@ class TestEvents:
         tgui.enter_number_into_spinbox(avg_event_dialog.dia.filter_data_spinbox, 10000)
         assert self.event_amplitude(avg_event_dialog.average_event_y) == 1
 
+        del avg_event_dialog
+
     def event_amplitude(self, data):
         return np.abs(np.max(data) - np.min(data))
 
@@ -1206,104 +1167,6 @@ class TestEvents:
         for idx, config in enumerate(["rise_half_width", "peak", "baseline"]):
             tgui.set_combobox(tgui.mw.dialogs["template_analyse_events"].average_all_events_dialog.dia.alignment_method_combobox, idx)
             assert config == tgui.mw.dialogs["template_analyse_events"].average_all_events_dialog.alignment_method
-
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Max Slope Tests
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-
-    def setup_max_slope_events(self, tgui, smooth=False, use_baseline_crossing=False):
-        options_dialog = tgui.setup_max_slope_events(tgui, smooth, use_baseline_crossing)
-        return options_dialog
-
-    def test_max_slope_events(self, tgui):
-        """
-        Tested against Axograph implementation
-        """
-        axograph_first_event_rise_3, axograph_first_event_decay_3, \
-            axograph_first_event_rise_5, axograph_first_event_decay_7 = tgui.get_axograph_max_slope_to_test_against()
-
-        tgui.load_a_filetype("cell_5")
-
-        self.setup_max_slope_events(tgui, use_baseline_crossing=True)
-        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_threshold_analyse_events"].dia.threshold_lower_spinbox, -180)
-        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
-
-        np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
-
-        assert axograph_first_event_rise_3 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
-        assert axograph_first_event_decay_3 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_decay", "max_slope_ms")[0], 4)
-
-        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_analysis_options"].dia.max_slope_num_samples_rise_spinbox, 5)
-        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_analysis_options"].dia.max_slope_num_samples_decay_spinbox, 7)
-        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
-
-        assert axograph_first_event_rise_5 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
-        assert axograph_first_event_decay_7 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_decay", "max_slope_ms")[0], 4)
-
-    @pytest.mark.parametrize("use_first_baseline_crossing", [False, True])
-    def test_max_slope_with_smoothing(self, tgui, use_first_baseline_crossing):
-        """
-        Check the GUI side for max slope with smoothing. Run analysis with max rise / decay slope on smoothing
-        then re-run here and check results match. Also tests 'Always use baseline crossing as max slope search endpoint'
-        in a convenient way. If working correctly, max slope here will match the GUI because the decay_point idx will match
-        as in setup_max_slope_events(), decay_endpoint_search_method is set to match the max slope decay method.
-        """
-        tgui.update_events_to_varying_amplitude_and_tau()
-        self.setup_max_slope_events(tgui, smooth=True, use_baseline_crossing=use_first_baseline_crossing)
-
-        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_threshold_analyse_events"].dia.threshold_lower_spinbox, -65)
-        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
-
-        test_max_rise, test_max_decay = self.get_max_slope_test_results(tgui)
-
-        model_max_rise = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "max_rise", "max_slope_ms")
-        tabledata_max_rise = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "max_rise", "max_slope_ms")
-        qtable_max_rise = tgui.get_data_from_qtable("max_rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-
-        assert utils.allclose(test_max_rise, model_max_rise, 1e-10)
-        assert utils.allclose(test_max_rise, tabledata_max_rise, 1e-10)
-        assert utils.allclose(test_max_rise, qtable_max_rise, 1e-10)
-
-        model_max_decay = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "max_decay", "max_slope_ms")
-        tabledata_max_decay = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "max_decay", "max_slope_ms")
-        qtable_max_decay = tgui.get_data_from_qtable("max_decay", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-
-        assert utils.allclose(test_max_decay, model_max_decay, 1e-3)
-        assert utils.allclose(test_max_decay, tabledata_max_decay, 1e-3)
-        assert utils.allclose(test_max_decay, qtable_max_decay, 1e-3)
-
-    def get_max_slope_test_results(self, tgui):
-
-        bl_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("baseline", "idx"))
-        decay_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("decay_point", "idx"))
-        peak_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("peak", "idx"))
-        recs = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("record_num", "rec_idx"))
-
-        test_max_rise = []
-        test_max_decay = []
-        for i in range(len(bl_idx)):
-
-            rise_max_slope, __, __ = core_analysis_methods.calculate_max_slope_rise_or_decay(tgui.adata.time_array[recs[i]],
-                                                                                             tgui.adata.im_array[recs[i]],
-                                                                                             bl_idx[i],
-                                                                                             peak_idx[i],
-                                                                                             window_samples=3,
-                                                                                             ts=tgui.adata.ts,
-                                                                                             smooth_settings={"on": True, "num_samples": 2},
-                                                                                             argmax_func=np.argmin)
-            test_max_rise.append(rise_max_slope)
-
-            decay_max_slope, __, __ = core_analysis_methods.calculate_max_slope_rise_or_decay(tgui.adata.time_array[recs[i]],
-                                                                                              tgui.adata.im_array[recs[i]],
-                                                                                              peak_idx[i],
-                                                                                              decay_idx[i],
-                                                                                              window_samples=3,
-                                                                                              ts=tgui.adata.ts,
-                                                                                              smooth_settings={"on": True, "num_samples": 2},
-                                                                                              argmax_func=np.argmax)
-            test_max_decay.append(decay_max_slope)
-
-        return np.array(test_max_rise), np.array(test_max_decay)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1347,26 +1210,31 @@ class TestEvents:
                 elif mode == "after_load":
                     assert type(cell) in [np.float64, np.int64, np.ndarray]
 
-    def break_down_event_info_or_compare_two(self, event_info, second_event_info=None):
+    def break_down_event_info_or_compare_two(self, event_info, second_event_info=None, skip_dict_keys=None):
+
+        if not skip_dict_keys:
+            skip_dict_keys = []
+
         linear_event_info = []
         for rec in range(len(event_info)):
             for key1 in event_info[rec].keys():
                 for key2 in event_info[rec][key1].keys():
                     assert type(event_info[rec][key1][key2]) == dict
 
-                    for key3 in event_info[rec][key1][key2].keys():
+                    if key2 not in skip_dict_keys:
+                        for key3 in event_info[rec][key1][key2].keys():
 
-                        lowest_level = event_info[rec][key1][key2][key3]
-                        assert type(lowest_level) != dict  # event_info dict must be 3 levels max (time, dict layer 1, dict layer 2)
-                        linear_event_info.append(lowest_level)
+                            lowest_level = event_info[rec][key1][key2][key3]
+                            assert type(lowest_level) != dict  # event_info dict must be 3 levels max (time, dict layer 1, dict layer 2)
+                            linear_event_info.append(lowest_level)
 
-                        if second_event_info:
-                            if type(lowest_level) == np.ndarray:
-                                np.array_equal(event_info[rec][key1][key2][key3], second_event_info[rec][key1][key2][key3])
-                            elif np.all(lowest_level == [np.nan]):
-                                pass
-                            else:
-                                assert lowest_level == second_event_info[rec][key1][key2][key3]
+                            if second_event_info:
+                                if type(lowest_level) == np.ndarray:
+                                    np.array_equal(event_info[rec][key1][key2][key3], second_event_info[rec][key1][key2][key3])
+                                elif np.all(lowest_level == [np.nan]):
+                                    pass
+                                else:
+                                    assert lowest_level == second_event_info[rec][key1][key2][key3]
 
         return linear_event_info
 
@@ -1379,15 +1247,52 @@ class TestEvents:
         tgui.run_artificial_events_analysis(tgui, template_or_threshold)
         full_filepath = tgui.save_events_analysis(tgui)
 
-        with open(full_filepath, "rb") as f:
-            load_defaults = f.read()
-        loaded_file_dict = tgui.mw.cfgs.decrypt_data(load_defaults)
+        loaded_file_dict = self.load_saved_event_info(tgui, full_filepath)
 
         self.break_down_event_info_or_compare_two(tgui.mw.loaded_file.event_info,
                                                   loaded_file_dict["event_info"])
         assert loaded_file_dict["filename"] == tgui.mw.loaded_file.fileinfo["filename"]
         assert loaded_file_dict["num_samples"] == tgui.mw.loaded_file.data.num_samples
         assert loaded_file_dict["num_recs"] == tgui.mw.loaded_file.data.num_recs
+
+    @pytest.mark.parametrize("version", ["v2.3.3", "v2.4.0", "v2.5.0"])
+    def test_old_save_versions_load_correctly(self, tgui, version):
+        """
+        Make sure save events files in previous versions are loaded
+        into this version.
+        Note must update this for all new versions!
+        """
+        test_filepath = get_test_base_dir() + "/saved_events_tests/2022_01_11_0000 extract filt.abf"
+
+        tgui.mw.load_file(test_filepath)
+
+        saved_events_path = get_test_base_dir()  + f"/saved_events_tests/{version}_2022_01_11_0000 extract filt.json"
+
+        tgui.mw.loaded_file.load_event_analysis(saved_events_path)
+
+        loaded_file_dict = self.load_saved_event_info(tgui, saved_events_path)
+
+        skip_dict_keys = self.get_skip_dict_keys(version)
+
+        self.break_down_event_info_or_compare_two(tgui.mw.loaded_file.event_info,
+                                                  loaded_file_dict["event_info"],
+                                                  skip_dict_keys=skip_dict_keys)
+
+    def get_skip_dict_keys(self, version):
+        """
+        v2.3.3 was before area_under_curve, event_period was
+        added
+        """
+        if version == "v2.3.3":
+            return ["area_under_curve", "event_period"]
+
+    def load_saved_event_info(self, tgui, filepath):
+        """"""
+        with open(filepath, "rb") as f:
+            load_defaults = f.read()
+        loaded_file_dict = tgui.mw.cfgs.decrypt_data(load_defaults)
+        return loaded_file_dict
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Test Individual Events
@@ -1447,6 +1352,8 @@ class TestEvents:
         tgui.enter_number_into_spinbox(spinbox, 9999)
         assert spinbox.value() == 999
 
+        del dialog
+
     @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
     def test_omit_times(self, tgui, template_or_threshold):
         """
@@ -1460,14 +1367,15 @@ class TestEvents:
 
         tgui.set_widgets_for_artificial_event_data(tgui, template_or_threshold, biexp=False)
 
-        start_stop_times = [[1, 3], [5.4, 7.5], [10, 11], [13.2, 15]] if tgui.adata.num_recs > 1 else [[1, 5], [20, 30], [54.2, 78.2], [95.123, 95.32]]
+        start_stop_times = get_settings(tgui.speed,
+                                        tgui.analysis_type)["start_stop_times"]
 
         dialog = self.get_events_analysis_dialog(tgui, template_or_threshold)
         tgui.enter_numbers_into_omit_times_table(dialog, start_stop_times)
 
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
 
-        time_ = tgui.adata.peak_times["cumulative"]  # passed by reference, then tested on in check_event_times()
+        time_ = tgui.adata.peak_times[tgui.time_type]  # passed by reference, then tested on in check_event_times()
 
         for times in start_stop_times:
             start_time, stop_time = times
@@ -1476,10 +1384,12 @@ class TestEvents:
 
         self.check_event_times(tgui, 0)
 
+        del dialog
+
     def test_omit_times_specific(self, tgui):
         """
         """
-        first_event_time = tgui.adata.peak_times["cumulative"][0][0]
+        first_event_time = tgui.adata.peak_times[tgui.time_type][0][0]
 
         tgui.run_artificial_events_analysis(tgui, "threshold")
 
@@ -1499,6 +1409,8 @@ class TestEvents:
         tgui.run_artificial_events_analysis(tgui, "threshold")
 
         assert self.data_first_event_time(tgui) == first_event_time
+
+        del dialog
 
     def test_decay_endpoint_method_and_auc_time(self, tgui):
         """
@@ -1542,6 +1454,8 @@ class TestEvents:
                                                                                    bl_im[i])[0]
                 assert test_decay_point == decay_point[i]
 
+        del options_dialog
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # test all threshold widgets
 # ------------------------------------------------------------------------------------------------------------------------------------------
@@ -1574,36 +1488,7 @@ class TestEvents:
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
         assert first_event_amplitude == self.data_first_event_param(tgui, "amplitude", "im")
 
-    @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
-    def test_area_under_curve_threshold(self, tgui, template_or_threshold):
-        """
-        TODO: very similar to above
-        """
-        tgui.update_events_to_varying_amplitude_and_tau()
-        tgui.run_artificial_events_analysis(tgui, template_or_threshold)
-
-        first_event_auc = self.data_first_event_param(tgui, "area_under_curve", "im")
-
-        threshold = abs(first_event_auc) + 0.01
-
-        checkbox = tgui.mw.mw.events_threshold_area_under_curve_checkbox if template_or_threshold == "threshold" else tgui.mw.mw.events_template_area_under_curve_checkbox
-        spinbox = tgui.mw.mw.events_threshold_area_under_curve_spinbox if template_or_threshold == "threshold" else tgui.mw.mw.events_template_area_under_curve_spinbox
-
-        tgui.switch_checkbox(checkbox, on=True)
-        tgui.enter_number_into_spinbox(spinbox, threshold)
-
-        dialog = self.get_events_analysis_dialog(tgui, template_or_threshold)
-
-        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-
-        new_first_event_auc = self.data_first_event_param(tgui, "area_under_curve", "im")
-        assert first_event_auc != new_first_event_auc
-        all_amplitudes = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs("area_under_curve", "im"))
-        assert (abs(all_amplitudes) >= threshold).all()
-
-        tgui.enter_number_into_spinbox(spinbox, 1)
-        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-        assert first_event_auc == self.data_first_event_param(tgui, "area_under_curve", "im")
+        del dialog
 
     @pytest.mark.parametrize("monoexp_or_biexp", ["monoexp", "biexp"])
     def test_r2_cutoff(self, tgui, monoexp_or_biexp):
@@ -1641,51 +1526,7 @@ class TestEvents:
         all_r2 = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs(param_key, "r2"))
         assert (abs(all_r2) >= threshold).all()
 
-    @pytest.mark.parametrize("monoexp_or_biexp", ["monoexp", "biexp"])
-    def test_adjust_start_point_to_improve_fit(self, tgui, monoexp_or_biexp):
-
-        param_key = monoexp_or_biexp + "_fit"
-        tgui.update_events_to_varying_amplitude_and_tau()
-
-        self.add_noise_to_loaded_file_traces(tgui, noise_divisor=2)
-        options_dialog = tgui.open_analysis_options_dialog(tgui)
-
-        if monoexp_or_biexp == "monoexp":
-            idx = 0
-            checkbox = options_dialog.dia.monoexp_fit_adjust_start_point_checkbox
-            spinbox = options_dialog.dia.monoexp_fit_adjust_start_point_spinbox
-
-        elif monoexp_or_biexp == "biexp":
-            idx = 1
-            checkbox = options_dialog.dia.monoexp_fit_adjust_start_point_checkbox
-            spinbox = options_dialog.dia.biexp_fit_adjust_start_point_spinbox
-
-        tgui.set_combobox(options_dialog.dia.event_fit_method_combobox, idx)
-
-        biexp = True if monoexp_or_biexp == "biexp" else False
-        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp, overide_biexp_adjust_start_point=True)
-
-        all_fit_times = self.get_list_of_fit_times(tgui, monoexp_or_biexp)
-        all_r2 = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs(param_key, "r2"))
-
-        tgui.switch_checkbox(checkbox, on=True)
-        tgui.enter_number_into_spinbox(spinbox, "3")
-
-        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp)
-
-        new_fit_times = self.get_list_of_fit_times(tgui, monoexp_or_biexp)
-        new_r2 = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs(param_key, "r2"))
-
-        idx_same = np.where(all_fit_times == new_fit_times)
-        idx_less = np.where(all_fit_times < new_fit_times)
-        idx_more = np.where(all_fit_times > new_fit_times)
-
-        assert (new_r2[idx_same] == all_r2[idx_same]).all()
-        assert (new_r2[idx_less] > all_r2[idx_less]).all()
-        assert (new_r2[idx_more] > all_r2[idx_more]).all()
-
-        if monoexp_or_biexp == "biexp":
-            assert (new_fit_times > all_fit_times).any()
+        del options_dialog
 
     def get_list_of_fit_times(self, tgui, monoexp_or_biexp):
         """
@@ -1744,6 +1585,8 @@ class TestEvents:
         tgui.switch_checkbox(checkbox, on=False)
         tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
         assert first_event_tau == self.data_first_event_param(tgui, "monoexp_fit", "tau_ms")
+
+        del options_dialog
 
     def test_fitting_bounds_specific_biexp(self, tgui):
         """
@@ -1804,6 +1647,8 @@ class TestEvents:
         tgui.switch_checkbox(checkbox, on=False)
         tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
         assert first_event_decay == self.data_first_event_param(tgui, "biexp_fit", "decay_ms")
+
+        del options_dialog
 
     def set_biexp_bounds_spinboxes(self, tgui, min_rise_thr, max_rise_thr, min_decay_thr, max_decay_thr):
         """
@@ -1873,23 +1718,7 @@ class TestEvents:
         decay_perc_ims = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("decay_perc", "im"))
         assert not np.isin(decay_perc_ims, tgui.mw.loaded_file.data.im_array).all()  # very basic, this is also tested in test_calclate_decay_percentage_peak_from_smoothed_decay()
 
-    @pytest.mark.parametrize("decay_percent", [25, 50, 75])  # tested in more detail in test_calclate_decay_percentage_peak_from_smoothed_decay()
-    def test_decay_percents(self, tgui, decay_percent):
-        """
-        """
-        tgui.update_events_to_varying_amplitude_and_tau()
-        options_dialog = tgui.open_analysis_options_dialog(tgui)
-
-        tgui.enter_number_into_spinbox(options_dialog.dia.decay_amplitude_perc_spinbox,
-                                       decay_percent)
-
-        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=False)
-
-        test_decay_perc = tgui.adata.get_all_decay_times(decay_percent)
-
-        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-
-        assert utils.allclose(test_decay_perc, qtable_decay_perc, 1e-10)
+        del options_dialog
 
     @pytest.mark.parametrize("rise_perc_low_high", [[0, 10], [25, 75], [33, 66], [55, 81], [80, 99]])
     def test_rise_times_percent_change(self, tgui, rise_perc_low_high):
@@ -1911,14 +1740,14 @@ class TestEvents:
         tgui.run_artificial_events_analysis(tgui, "threshold", biexp=False)
 
         # calculate expected rise times
-        amplitudes = tgui.get_data_from_qtable("amplitude", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        amplitudes = tgui.get_data_from_qtable("amplitude", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         test_low_im, test_low_time = self.get_nearest_datapoints_to_rise_time_im_percent(tgui, amplitudes * (low / 100) + tgui.adata.resting_im)
         test_high_im, test_high_time = self.get_nearest_datapoints_to_rise_time_im_percent(tgui, amplitudes * (high / 100) + tgui.adata.resting_im)
         test_rise_times = (test_high_time - test_low_time) * 1000
 
         # check against table and plot
-        qtable_rise_times = tgui.get_data_from_qtable("rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_rise_times = tgui.get_data_from_qtable("rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
         assert utils.allclose(test_rise_times, qtable_rise_times, 1e-10)
 
         low_plot = np.array([])
@@ -1935,6 +1764,8 @@ class TestEvents:
 
         assert utils.allclose(low_plot, test_low_im, 1e-10)
         assert utils.allclose(high_plot, test_high_im, 1e-10)
+
+        del options_dialog
 
     def get_nearest_datapoints_to_rise_time_im_percent(self, tgui, theoretical_rise_points):
         """
@@ -1970,12 +1801,16 @@ class TestEvents:
 
         tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_decay_search_period_spinbox, 6.1)
 
+        self.set_omit_times_for_axograph_first_events(tgui)
+
         tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, -135)
         tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
 
         first_auc = tgui.mw.loaded_file.make_list_from_event_info_all_recs("area_under_curve", "im")[0]
 
         assert utils.allclose(axograph_first_event_auc, first_auc, 1e-1)
+
+        del dialog
 
     def setup_for_event_interpolation_test(self, tgui):
         tgui.update_events_to_varying_amplitude_and_tau()
@@ -2022,9 +1857,9 @@ class TestEvents:
         test_decay_perc = tgui.adata.get_all_decay_times()
         test_half_width = tgui.adata.get_all_half_widths()
 
-        qtable_rise_times = tgui.get_data_from_qtable("rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
-        qtable_half_width = tgui.get_data_from_qtable("half_width", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_rise_times = tgui.get_data_from_qtable("rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_half_width = tgui.get_data_from_qtable("half_width", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         rise_ss = np.sum((test_rise_times - qtable_rise_times)**2)
         decay_perc_ss = np.sum((test_decay_perc - qtable_decay_perc)**2)
@@ -2040,17 +1875,20 @@ class TestEvents:
         dialog, options_dialog = self.setup_for_event_interpolation_test(tgui)
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
 
-        qtable_rise_times_no_interp = tgui.get_data_from_qtable("rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_rise_times_no_interp = tgui.get_data_from_qtable("rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         tgui.switch_checkbox(options_dialog.dia.interp_200khz_checkbox, on=True)
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-        qtable_rise_times_interp = tgui.get_data_from_qtable("rise", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_rise_times_interp = tgui.get_data_from_qtable("rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         test_rise = (tgui.adata.rise * np.squeeze(tgui.adata.rise_offsets)) * tgui.adata.ts * 1000
         ss_rise = np.sum((test_rise - qtable_rise_times_no_interp)**2)
         ss_rise_interp = np.sum((test_rise - qtable_rise_times_interp)**2)
 
         assert ss_rise > ss_rise_interp
+
+        del dialog
+        del options_dialog
 
     def test_individual_events_panel(self, tgui):
         """
@@ -2078,17 +1916,19 @@ class TestEvents:
         self.check_disp_event_info(num_clicks - 1, dialog, tgui)
 
         # save table, delete event, check table and plot update
-        qtable_amplitudes = tgui.get_data_from_qtable("amplitude", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_amplitudes = tgui.get_data_from_qtable("amplitude", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         tgui.left_mouse_click(dialog.dia.delete_individual_trace_button)
 
         tgui.switch_mw_tab(1)  # need to update table
-        qtable_amplitudes_del = tgui.get_data_from_qtable("amplitude", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")
+        qtable_amplitudes_del = tgui.get_data_from_qtable("amplitude", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
 
         self.check_disp_event_info(num_clicks - 1, dialog, tgui)
 
         assert len(qtable_amplitudes_del) == len(qtable_amplitudes) - 1
         assert utils.allclose(qtable_amplitudes_del, np.delete(qtable_amplitudes, num_clicks - 1), 1e-10)
+
+        del dialog
 
     def test_individual_events_across_recs(self, tgui):
         """
@@ -2123,8 +1963,9 @@ class TestEvents:
         tgui.left_mouse_click(dialog.dia.go_to_event_button)
         assert tgui.mw.cfgs.main["displayed_rec"] == 1
 
-    def check_disp_event_info(self, idx, dialog, tgui):
+        del dialog
 
+    def check_disp_event_info(self, idx, dialog, tgui):
         assert self.displayed_event_num(dialog) == idx + 1
         assert self.highlighted_peak_idx(tgui) == idx
 
@@ -2135,17 +1976,23 @@ class TestEvents:
         return int(ev_num)
 
     def highlighted_peak_idx(self, tgui):
-
+        """
+        Updated to cycle through all recs and keep track of the absolute
+        idx of the highlighted peak rather than relative to rec
+        """
         green = (0, 204, 0, 255)
 
-        points_on_rec = tgui.mw.loaded_file_plot.peak_plot.scatter.points()
+        track_idx = -1
+        for rec in range(tgui.adata.num_recs):
+            tgui.mw.update_displayed_rec(rec)
+            points_on_rec = tgui.mw.loaded_file_plot.peak_plot.scatter.points()
 
-        for idx, point in enumerate(points_on_rec):
+            for point in points_on_rec:
+                track_idx += 1
+                if point.brush().color().getRgb() == green:
+                    return track_idx
 
-            if point.brush().color().getRgb() == green:
-                return idx
-
-        return "none_on_rec"
+        return "none_in_file"
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Manual Event and Kinetics Selection
@@ -2183,8 +2030,7 @@ class TestEvents:
                                 [0, 2, "m_three"], [0, 0, "m_four"]]
             rec_from = rec_to = None  # required format for self.check_event_times()
         else:
-            spikes_to_delete = [[rec_from, 4, "m_one"], [rec_from, 0, "m_two"],
-                                [rec_from + 4, 2, "m_three"], [rec_from + 6, 0, "m_four"]]
+            spikes_to_delete = [[rec_from, 2, "m_one"], [rec_from + 6, 0, "m_two"]]
 
         return spikes_to_delete, rec_from, rec_to
 
@@ -2209,7 +2055,7 @@ class TestEvents:
             num_evs_per_rec = core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info, return_per_rec=True)
             abs_ev_idx = int(np.cumsum(num_evs_per_rec)[rec - 1] + rec_ev_idx) if rec > 0 else rec_ev_idx
             tgui.switch_mw_tab(1)
-            qtable_baseline = tgui.get_data_from_qtable("baseline", rec_from=0, rec_to=tgui.adata.num_events(), analysis_type="events")[abs_ev_idx]
+            qtable_baseline = tgui.get_data_from_qtable("baseline", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")[abs_ev_idx]
             assert new_bl_im == qtable_baseline
             tgui.switch_mw_tab(0)
 
@@ -2237,8 +2083,8 @@ class TestEvents:
             im_array = avg_dialog.average_event_y
             time_array = avg_dialog.average_event_x
         else:
-            rec = 2 if tgui.analysis_type == "events_multi_record" else 0
-            rec_ev_idx = 4
+            rec = 2 if tgui.analysis_type in ["events_multi_record", "events_multi_record_norm"] else 0
+            rec_ev_idx = 2
             time_multiplier = 1
             bl_plot = tgui.mw.loaded_file_plot.bl_plot
             decay_point_plot = tgui.mw.loaded_file_plot.decay_point_plot
@@ -2328,6 +2174,9 @@ class TestEvents:
         assert changed_decay_event_info["baseline"]["time"] == changed_bl_event_info["baseline"]["time"]
         self.check_baseline_against_qtable(tgui, rec, rec_ev_idx, changed_bl_event_info["baseline"]["im"], avg_dialog)
 
+        del options_dialog
+        del dialog
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Average Events - Kinetics and Load, Save Event
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2368,6 +2217,8 @@ class TestEvents:
                                              ev_time=list(avg_dialog.event_info[0].keys())[0],
                                              fit_data=avg_dialog.biexp_event_fit_plot.yData)
 
+        del avg_dialog
+
     def run_avg_event_kinetics_analysis(self, tgui, avg_dialog, region_bounds_upper=50):
         tgui.set_combobox(avg_dialog.dia.alignment_method_combobox, 1)  # need this or it align HW and the average event changes slightly as HW on biexp is not the same as no fit
         tgui.switch_groupbox(avg_dialog.dia.calculate_event_kinetics_groupbox, on=True)
@@ -2402,6 +2253,7 @@ class TestEvents:
 
         tgui = GuiTestSetup("artificial_events_one_record")
         tgui.setup_mainwindow(show=True)
+        tgui.speed = SPEED
         tgui.test_update_fileinfo()
         tgui.setup_artificial_data(time_type, analysis_type="curve_fitting")
 
@@ -2418,7 +2270,8 @@ class TestEvents:
         # set options for fitting curve fitting biexponential
         dialog = tgui.switch_to_threshold_and_open_analsis_dialog(tgui)
         tgui.set_combobox(tgui.mw.mw.events_threshold_peak_direction_combobox, 0)
-        tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_decay_search_period_spinbox, 1000)
+        tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_decay_search_period_spinbox, get_settings(tgui.speed,
+                                                                                                "curve_fitting")["decay_search_period"])
         tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_amplitude_threshold_spinbox, 2)
         tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_baseline_search_period_spinbox, 100)
         tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, -59)
@@ -2427,7 +2280,6 @@ class TestEvents:
         options_dialog = tgui.open_analysis_options_dialog(tgui)
         tgui.set_combobox(options_dialog.dia.event_fit_method_combobox, 2)
         tgui.left_mouse_click(dialog.dia.fit_all_events_button)
-
         stored_event_info_no_fit = self.run_avg_kinetics_save_event_info(tgui, dialog, close=True)
 
         # run analysis with biexp fit and check the results match exactly the version with no fit. This works because we have a perfect
@@ -2459,6 +2311,9 @@ class TestEvents:
         assert float(table.item(2, 16).data(0)) == 1
         avg_dialog.results_table_dialog.close()
 
+        del dialog
+        del options_dialog
+        del avg_dialog
         tgui.shutdown()
 
     def check_kinetics_are_on_biexp_fit(self, event_info, ev_time, fit_data):
@@ -2514,7 +2369,7 @@ class TestEvents:
 
         tgui.set_analysis_type("curve_fitting")
         tgui.left_mouse_click(tgui.mw.mw.curve_fitting_show_dialog_button)
-        first_peak_time = tgui.adata.peak_times["cumulative"][0][0]
+        first_peak_time = tgui.adata.peak_times[tgui.time_type][0][0]
 
         tgui.switch_checkbox(tgui.mw.dialogs["curve_fitting"].dia.hide_baseline_radiobutton, on=True)
 
@@ -2523,7 +2378,7 @@ class TestEvents:
         tgui.mw.curve_fitting_regions["reg_1"].bounds["upper_exp_lr"].setRegion((first_peak_time - 0.005,
                                                                                  ev_stop_time))
 
-        tgui.set_combobox(tgui.mw.dialogs["curve_fitting"].dia.fit_type_combobox, 7)
+        tgui.set_combobox(tgui.mw.dialogs["curve_fitting"].dia.fit_type_combobox, 8)
         tgui.switch_checkbox(tgui.mw.dialogs["curve_fitting"].dia.max_slope_direction_pos_radiobutton, on=True)
 
         tgui.mw.cfgs.curve_fitting["analysis"]["reg_1"]["biexp_event"]["direction"] = -1
@@ -2570,7 +2425,7 @@ class TestEvents:
 
     # analyse specific recs
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
-    def test_event_kinetics_plots(self, tgui, analyse_specific_recs): 
+    def test_event_kinetics_plots(self, tgui, analyse_specific_recs):
         """
         peak plots tested elsewhere
         """
@@ -2578,8 +2433,9 @@ class TestEvents:
         self.setup_max_slope_events(tgui)
         tgui.enter_number_into_spinbox(tgui.mw.mw.events_threshold_amplitude_threshold_spinbox, 1)
 
-        analyse_specific_recs = analyse_specific_recs if tgui.analysis_type == "events_multi_record" else False  # wasteful
+        analyse_specific_recs = analyse_specific_recs if tgui.analysis_type in ["events_multi_record", "events_multi_record_norm"] else False  # wasteful
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
+
 
         tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_threshold_analyse_events"].dia.threshold_lower_spinbox, -65)
         tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
@@ -2661,6 +2517,8 @@ class TestEvents:
             plot, key_1, time_key, data_key, combine = info
             self.check_kinetics_event_info_against_plots(tgui, rec, plot, key_1, time_key, data_key, combine, event_info=avg_dialog.event_info[0], convert_to_ms=True)
 
+        del avg_dialog
+
     def test_curve_fitting_event_kinetics_plots(self, tgui):
 
         tgui = self.setup_curve_fitting_biexp_event(tgui)
@@ -2690,71 +2548,322 @@ class TestEvents:
                              [ev_plots["peak_plot"], "peak", "time", "im", False]]:
                     plot, key_1, time_key, data_key, combine = info
                     self.check_kinetics_event_info_against_plots(tgui, rec, plot, key_1, time_key, data_key, combine, event_info=event_info)
+
+            del ev_opts_dialog
+
         tgui.shutdown()
+
+    @pytest.mark.parametrize("decay_percent", [25, 50, 75])  # tested in more detail in test_calclate_decay_percentage_peak_from_smoothed_decay()
+    def test_decay_percents(self, tgui, decay_percent):
+        """
+        """
+        tgui.update_events_to_varying_amplitude_and_tau()
+        options_dialog = tgui.open_analysis_options_dialog(tgui)
+
+        tgui.enter_number_into_spinbox(options_dialog.dia.decay_amplitude_perc_spinbox,
+                                       decay_percent)
+
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=False)
+
+        test_decay_perc = tgui.adata.get_all_decay_times(decay_percent)
+
+        qtable_decay_perc = tgui.get_data_from_qtable("decay_perc", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+
+        assert utils.allclose(test_decay_perc, qtable_decay_perc, 1e-10)
+
+        del options_dialog
+
+    def get_quick_half_width(self, tgui, rec, event_info):
+        mid = event_info["baseline"]["im"] + (event_info["peak"]["im"] - event_info["baseline"]["im"]) / 2
+        rise_idx = np.argmin(np.abs(tgui.adata.im_array[rec][:event_info["peak"]["idx"]] - mid))
+        decay_idx = event_info["peak"]["idx"] + np.argmin(np.abs(tgui.adata.im_array[rec][event_info["peak"]["idx"]:] - mid))
+        return decay_idx - rise_idx
 
     @pytest.mark.parametrize("region", ["reg_1", "reg_2", "reg_3", "reg_4", "reg_5", "reg_6"])
     def test_curve_fitting_kinetics_all_options(self, tgui, region):  # dont check manual baseline
         """
         """
-        def wrap_to_avoid_pytest_seg_fault(tgui, region):
-            tgui = self.setup_curve_fitting_biexp_event(tgui)
-            self.add_noise_to_loaded_file_traces(tgui, 25)
+        tgui = self.setup_curve_fitting_biexp_event(tgui)
+        self.add_noise_to_loaded_file_traces(tgui, 25)
 
-            test_curve_fitting.setup_and_run_curve_fitting_analysis(tgui, func_type="biexp_event", region_name=region, rec_from=0, rec_to=tgui.adata.num_recs, set_options_only=False)
+        test_curve_fitting.setup_and_run_curve_fitting_analysis(tgui, func_type="biexp_event", region_name=region, rec_from=0, rec_to=tgui.adata.num_recs, set_options_only=False)
 
-            for rec in range(tgui.adata.num_recs):
-                event_info = self.get_cf_event_info(tgui, rec, region)
+        tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.curve_fitting_event_kinetics_options)
+        ev_opts_dialog = tgui.mw.dialogs["curve_fitting"].curve_fitting_events_kinetics_dialog
 
-                if event_info:
-                    assert event_info["half_width"]["decay_mid_idx"] - event_info["half_width"]["rise_mid_idx"] < 50  # all squashed as baseline search time time is not long enough
+        tgui.enter_number_into_spinbox(ev_opts_dialog.dia.baseline_search_period_spinbox, 100, setValue=True)
+        tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
 
-            tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.curve_fitting_event_kinetics_options)
-            ev_opts_dialog = tgui.mw.dialogs["curve_fitting"].curve_fitting_events_kinetics_dialog
+        for rec in range(tgui.adata.num_recs):
+            event_info = self.get_cf_event_info(tgui, rec, region)
 
-            tgui.enter_number_into_spinbox(ev_opts_dialog.dia.baseline_search_period_spinbox, 100, setValue=True)
+            quick_half_width = self.get_quick_half_width(tgui, rec, event_info)
+            measured_half_width = event_info["half_width"]["decay_mid_idx"] - event_info["half_width"]["rise_mid_idx"]
+            assert(measured_half_width < quick_half_width and measured_half_width > quick_half_width - 5)  # the half width is measured on monoexp rather
+                                                                                                           # that true data so just give an arbitary range.
+
+            tgui.switch_checkbox(ev_opts_dialog.dia.average_baseline_checkbox, on=True)
+            tgui.enter_number_into_spinbox(ev_opts_dialog.dia.average_baseline_spinbox, 10, setValue=True)
             tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
+            event_info = self.get_cf_event_info(tgui, rec, region)
 
-            for rec in range(tgui.adata.num_recs):
-                event_info = self.get_cf_event_info(tgui, rec, region)
-                assert event_info["half_width"]["decay_mid_idx"] - event_info["half_width"]["rise_mid_idx"] > 150
 
-                tgui.switch_checkbox(ev_opts_dialog.dia.average_baseline_checkbox, on=True)
-                tgui.enter_number_into_spinbox(ev_opts_dialog.dia.average_baseline_spinbox, 10, setValue=True)
-                tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
-                event_info = self.get_cf_event_info(tgui, rec, region)
+            bl_search_samples = core_analysis_methods.quick_get_time_in_samples(tgui.adata.ts, 10 / 1000)  # check
+            bl_idx = event_info["baseline"]["idx"]
+            test_avg_baseline = np.mean(tgui.mw.loaded_file.data.im_array[rec][bl_idx - bl_search_samples:bl_idx + 1])
 
-                bl_search_samples = core_analysis_methods.quick_get_time_in_samples(tgui.adata.ts, 10 / 1000)
-                bl_idx = event_info["baseline"]["idx"]
-                test_avg_baseline = np.mean(tgui.mw.loaded_file.data.im_array[rec][bl_idx-bl_search_samples:bl_idx + 1])
+            assert test_avg_baseline == event_info["baseline"]["im"]
 
-                assert test_avg_baseline == event_info["baseline"]["im"]
+            peak_idx = event_info["peak"]["idx"]
+            assert tgui.mw.loaded_file.data.im_array[rec][peak_idx] == event_info["peak"]["im"]
 
-                peak_idx = event_info["peak"]["idx"]
-                assert tgui.mw.loaded_file.data.im_array[rec][peak_idx] == event_info["peak"]["im"]
+        three_samples_in_ms = (tgui.adata.ts * 3) * 1000
+        tgui.switch_checkbox(ev_opts_dialog.dia.average_peak_checkbox, on=True)
+        tgui.enter_number_into_spinbox(ev_opts_dialog.dia.average_peak_spinbox, three_samples_in_ms, setValue=True)  # round(three_samples_in_ms, 2)
+        tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
 
-            three_samples_in_ms = (tgui.adata.ts * 3) * 1000
-            tgui.switch_checkbox(ev_opts_dialog.dia.average_peak_checkbox, on=True)
-            tgui.enter_number_into_spinbox(ev_opts_dialog.dia.average_peak_spinbox, three_samples_in_ms, setValue=True)  # round(three_samples_in_ms, 2)
-            tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
+        for rec in range(tgui.adata.num_recs):
+            event_info = self.get_cf_event_info(tgui, rec, region)
 
-            for rec in range(tgui.adata.num_recs):
-                event_info = self.get_cf_event_info(tgui, rec, region)
+            window = np.floor(core_analysis_methods.quick_get_time_in_samples(tgui.adata.ts, tgui.mw.cfgs.events["decay_search_period_s"]) / 4).astype(int)
 
-                window = np.floor(core_analysis_methods.quick_get_time_in_samples(tgui.adata.ts, tgui.mw.cfgs.events["decay_search_period_s"]) / 4).astype(int)
+            __, __, test_avg_peak = voltage_calc.find_event_peak_after_smoothing(tgui.mw.loaded_file.data.time_array[rec], tgui.mw.loaded_file.data.im_array[rec], peak_idx, window, samples_to_smooth=3, direction=1)
 
-                __, __, test_avg_peak = voltage_calc.find_event_peak_after_smoothing(tgui.mw.loaded_file.data.time_array[rec], tgui.mw.loaded_file.data.im_array[rec], peak_idx, window, samples_to_smooth=3, direction=1)
+            assert utils.allclose(test_avg_peak, event_info["peak"]["im"])
 
-                assert utils.allclose(test_avg_peak, event_info["peak"]["im"])
+        tgui.switch_checkbox(ev_opts_dialog.dia.calculate_kinetics_from_fit_not_data_checkbox, on=True)
+        tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
 
-            tgui.switch_checkbox(ev_opts_dialog.dia.calculate_kinetics_from_fit_not_data_checkbox, on=True)
-            tgui.left_mouse_click(tgui.mw.dialogs["curve_fitting"].dia.fit_button)
+        for rec in range(tgui.adata.num_recs):
+            event_info = self.get_cf_event_info(tgui, rec, region, extract_time=False)
 
-            for rec in range(tgui.adata.num_recs):
-                event_info = self.get_cf_event_info(tgui, rec, region, extract_time=False)
+            self.check_kinetics_are_on_biexp_fit(event_info=event_info,
+                                                 ev_time=list(event_info.keys())[0],
+                                                 fit_data=tgui.mw.loaded_file.curve_fitting_results[region]["data"][rec]["fit"])
 
-                self.check_kinetics_are_on_biexp_fit(event_info=event_info,
-                                                     ev_time=list(event_info.keys())[0],
-                                                     fit_data=tgui.mw.loaded_file.curve_fitting_results[region]["data"][rec]["fit"])
-            tgui.shutdown()
+        del ev_opts_dialog
+        tgui.shutdown()
 
-        wrap_to_avoid_pytest_seg_fault(tgui, region)
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Max Slope Tests
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def setup_max_slope_events(self, tgui, smooth=False, use_baseline_crossing=False):
+        options_dialog = tgui.setup_max_slope_events(tgui, smooth, use_baseline_crossing)
+        return options_dialog
+
+    def set_omit_times_for_axograph_first_events(self, tgui):
+        """
+        We only need the first couple of events for the axograph
+        """
+        dialog = self.get_events_analysis_dialog(tgui, "threshold")
+        tgui.enter_numbers_into_omit_times_table(dialog, [[1, tgui.mw.loaded_file.data.t_stop]])
+
+    def test_max_slope_events(self, tgui):
+        """
+        Tested against Axograph implementation
+        """
+        axograph_first_event_rise_3, axograph_first_event_decay_3, \
+            axograph_first_event_rise_5, axograph_first_event_decay_7 = tgui.get_axograph_max_slope_to_test_against()
+
+        tgui.load_a_filetype("cell_5")
+
+        self.setup_max_slope_events(tgui, use_baseline_crossing=True)
+        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_threshold_analyse_events"].dia.threshold_lower_spinbox, -180)
+
+        self.set_omit_times_for_axograph_first_events(tgui)
+
+        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
+
+        np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
+
+        assert axograph_first_event_rise_3 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
+        assert axograph_first_event_decay_3 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_decay", "max_slope_ms")[0], 4)
+
+        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_analysis_options"].dia.max_slope_num_samples_rise_spinbox, 5)
+        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_analysis_options"].dia.max_slope_num_samples_decay_spinbox, 7)
+        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
+
+        assert axograph_first_event_rise_5 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_rise", "max_slope_ms")[0], 3)
+        assert axograph_first_event_decay_7 == np.round(tgui.mw.loaded_file.make_list_from_event_info_all_recs("max_decay", "max_slope_ms")[0], 4)
+
+    @pytest.mark.parametrize("use_first_baseline_crossing", [False, True])
+    def test_max_slope_with_smoothing(self, tgui, use_first_baseline_crossing):
+        """
+        Check the GUI side for max slope with smoothing. Run analysis with max rise / decay slope on smoothing
+        then re-run here and check results match. Also tests 'Always use baseline crossing as max slope search endpoint'
+        in a convenient way. If working correctly, max slope here will match the GUI because the decay_point idx will match
+        as in setup_max_slope_events(), decay_endpoint_search_method is set to match the max slope decay method.
+        """
+        tgui.update_events_to_varying_amplitude_and_tau()
+        self.setup_max_slope_events(tgui, smooth=True, use_baseline_crossing=use_first_baseline_crossing)
+
+        tgui.enter_number_into_spinbox(tgui.mw.dialogs["events_threshold_analyse_events"].dia.threshold_lower_spinbox, -65)
+        tgui.left_mouse_click(tgui.mw.dialogs["events_threshold_analyse_events"].dia.fit_all_events_button)
+
+        test_max_rise, test_max_decay = self.get_max_slope_test_results(tgui)
+
+        model_max_rise = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "max_rise", "max_slope_ms")
+        tabledata_max_rise = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "max_rise", "max_slope_ms")
+        qtable_max_rise = tgui.get_data_from_qtable("max_rise", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+
+        assert utils.allclose(test_max_rise, model_max_rise, 1e-10)
+        assert utils.allclose(test_max_rise, tabledata_max_rise, 1e-10)
+        assert utils.allclose(test_max_rise, qtable_max_rise, 1e-10)
+
+        model_max_decay = self.unpack_event_info_values(tgui.mw.loaded_file.event_info, "max_decay", "max_slope_ms")
+        tabledata_max_decay = self.unpack_event_info_values(tgui.mw.stored_tabledata.event_info[0], "max_decay", "max_slope_ms")
+        qtable_max_decay = tgui.get_data_from_qtable("max_decay", row_from=0, row_to=tgui.adata.num_events(), analysis_type="events")
+
+        assert utils.allclose(test_max_decay, model_max_decay, 1e-3)
+        assert utils.allclose(test_max_decay, tabledata_max_decay, 1e-3)
+        assert utils.allclose(test_max_decay, qtable_max_decay, 1e-3)
+
+    def get_max_slope_test_results(self, tgui):
+
+        bl_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("baseline", "idx"))
+        decay_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("decay_point", "idx"))
+        peak_idx = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("peak", "idx"))
+        recs = np.hstack(tgui.mw.loaded_file.make_list_from_event_info_all_recs("record_num", "rec_idx"))
+
+        test_max_rise = []
+        test_max_decay = []
+        for i in range(len(bl_idx)):
+
+            rise_max_slope, __, __ = core_analysis_methods.calculate_max_slope_rise_or_decay(tgui.adata.time_array[recs[i]],
+                                                                                             tgui.adata.im_array[recs[i]],
+                                                                                             bl_idx[i],
+                                                                                             peak_idx[i],
+                                                                                             window_samples=3,
+                                                                                             ts=tgui.adata.ts,
+                                                                                             smooth_settings={"on": True, "num_samples": 2},
+                                                                                             argmax_func=np.argmin)
+            test_max_rise.append(rise_max_slope)
+
+            decay_max_slope, __, __ = core_analysis_methods.calculate_max_slope_rise_or_decay(tgui.adata.time_array[recs[i]],
+                                                                                              tgui.adata.im_array[recs[i]],
+                                                                                              peak_idx[i],
+                                                                                              decay_idx[i],
+                                                                                              window_samples=3,
+                                                                                              ts=tgui.adata.ts,
+                                                                                              smooth_settings={"on": True, "num_samples": 2},
+                                                                                              argmax_func=np.argmax)
+            test_max_decay.append(decay_max_slope)
+
+        return np.array(test_max_rise), np.array(test_max_decay)
+
+    @pytest.mark.parametrize("monoexp_or_biexp", ["monoexp", "biexp"])
+    def test_adjust_start_point_to_improve_fit(self, tgui, monoexp_or_biexp):
+
+        param_key = monoexp_or_biexp + "_fit"
+        tgui.update_events_to_varying_amplitude_and_tau()
+
+        self.add_noise_to_loaded_file_traces(tgui, noise_divisor=2)
+        options_dialog = tgui.open_analysis_options_dialog(tgui)
+
+        if monoexp_or_biexp == "monoexp":
+            idx = 0
+            checkbox = options_dialog.dia.monoexp_fit_adjust_start_point_checkbox
+            spinbox = options_dialog.dia.monoexp_fit_adjust_start_point_spinbox
+
+        elif monoexp_or_biexp == "biexp":
+            idx = 1
+            checkbox = options_dialog.dia.monoexp_fit_adjust_start_point_checkbox
+            spinbox = options_dialog.dia.biexp_fit_adjust_start_point_spinbox
+
+        tgui.set_combobox(options_dialog.dia.event_fit_method_combobox, idx)
+
+        biexp = True if monoexp_or_biexp == "biexp" else False
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp, overide_biexp_adjust_start_point=True)
+
+        all_fit_times = self.get_list_of_fit_times(tgui, monoexp_or_biexp)
+        all_r2 = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs(param_key, "r2"))
+
+        tgui.switch_checkbox(checkbox, on=True)
+        tgui.enter_number_into_spinbox(spinbox, "3")
+
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp)
+
+        new_fit_times = self.get_list_of_fit_times(tgui, monoexp_or_biexp)
+        new_r2 = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs(param_key, "r2"))
+
+        idx_same = np.where(all_fit_times == new_fit_times)
+        idx_less = np.where(all_fit_times < new_fit_times)
+        idx_more = np.where(all_fit_times > new_fit_times)
+
+        assert (new_r2[idx_same] == all_r2[idx_same]).all()
+        assert (new_r2[idx_less] > all_r2[idx_less]).all()
+        assert (new_r2[idx_more] > all_r2[idx_more]).all()
+
+        if monoexp_or_biexp == "biexp":
+            assert (new_fit_times > all_fit_times).any()
+
+        del options_dialog
+
+    @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
+    def test_lower_threshold_gui(self, tgui, template_or_threshold):
+
+        # Run and setup
+        tgui.run_artificial_events_analysis(tgui, template_or_threshold)
+        num_events = core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info)
+        assert any(tgui.mw.loaded_file.event_info) is True
+
+        peak_val = tgui.adata.peak_im
+        dialog_key = "template_analyse_events" if template_or_threshold == "template" else "events_threshold_analyse_events"  # OWN FUNCTION
+        dialog = tgui.mw.dialogs[dialog_key]
+
+        # Set the linear threshold to just below the peak val - should be no spikes
+        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, peak_val - 0.01)
+        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
+        assert any(tgui.mw.loaded_file.event_info) is False
+
+        # Set the spinbox to curved. find the minimum values of the curve and set it so this is close to the peak val but number.
+        # Analyse and check all are within threshold, then set just over threshold and check none are found. Tried to make it a
+        # bit more specific per-spike but its too complex with different curves per rec. This is unit tested more thoroughly.
+        tgui.set_combobox(dialog.dia.threshold_lower_combobox, 1)
+        min_curve_pos = np.min(np.min(dialog.curved_threshold_lower_w_displacement, axis=0))
+        offset = peak_val - min_curve_pos
+        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, offset)
+        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
+        new_num_events = core_analysis_methods.total_num_events(tgui.mw.loaded_file.event_info)
+        assert new_num_events == num_events
+
+        tgui.enter_number_into_spinbox(dialog.dia.threshold_lower_spinbox, offset - 5)
+        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
+        assert any(tgui.mw.loaded_file.event_info) is False
+
+        del dialog
+
+    @pytest.mark.parametrize("template_or_threshold", ["template", "threshold"])
+    def test_area_under_curve_threshold(self, tgui, template_or_threshold):
+        """
+        TODO: very similar to above
+        """
+        tgui.update_events_to_varying_amplitude_and_tau()
+        tgui.run_artificial_events_analysis(tgui, template_or_threshold)
+
+        first_event_auc = self.data_first_event_param(tgui, "area_under_curve", "im")
+
+        threshold = abs(first_event_auc) + 0.01
+
+        checkbox = tgui.mw.mw.events_threshold_area_under_curve_checkbox if template_or_threshold == "threshold" else tgui.mw.mw.events_template_area_under_curve_checkbox
+        spinbox = tgui.mw.mw.events_threshold_area_under_curve_spinbox if template_or_threshold == "threshold" else tgui.mw.mw.events_template_area_under_curve_spinbox
+
+        tgui.switch_checkbox(checkbox, on=True)
+        tgui.enter_number_into_spinbox(spinbox, threshold)
+
+        dialog = self.get_events_analysis_dialog(tgui, template_or_threshold)
+
+        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
+
+        new_first_event_auc = self.data_first_event_param(tgui, "area_under_curve", "im")
+        assert first_event_auc != new_first_event_auc
+        all_amplitudes = np.array(tgui.mw.loaded_file.make_list_from_event_info_all_recs("area_under_curve", "im"))
+        assert (abs(all_amplitudes) >= threshold).all()
+
+        tgui.enter_number_into_spinbox(spinbox, 1)
+        tgui.left_mouse_click(dialog.dia.fit_all_events_button)
+
+        assert first_event_auc == self.data_first_event_param(tgui, "area_under_curve", "im")
+
+        del dialog

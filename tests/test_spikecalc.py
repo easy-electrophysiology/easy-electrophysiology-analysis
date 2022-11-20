@@ -23,7 +23,7 @@ class TestSpikecalc:
     """
     @pytest.fixture(autouse=True)
     def test_spkcnt(test):
-        return TestArtificialSkCntData()
+        return TestArtificialSkCntData(max_num_spikes=50, min_spikes=5)  # use defaults here as this test quite fast anyways
 
     @pytest.fixture(autouse=True)
     def test_ir(test):
@@ -285,9 +285,10 @@ class TestSpikecalc:
                 self.steady_state = -50
 
                 self.vm_array *= self.offset
+
                 sag_to_steady_state_slope = np.linspace(self.sag_peak, self.steady_state, (self.sag_stop_idx - self.sag_start_idx))
                 self.vm_array[0][self.sag_start_idx:self.sag_stop_idx] = sag_to_steady_state_slope
-                self.vm_array[0][self.sag_stop_idx+1:self.steady_state_stop_idx] = self.steady_state
+                self.vm_array[0][self.sag_stop_idx+1:self.steady_state_stop_idx +1] = self.steady_state  # TODO: visualise
                 self.min_max_time = np.array([[0, self.num_samples]])
         data = Data()
         counted_recs, vm_avg, baseline, steady_state = current_calc.calculate_baseline_minus_inj(data.vm_array,
@@ -331,16 +332,14 @@ class TestSpikecalc:
         data = np.random.multivariate_normal([0, 0], [[1, cov], [cov, 1]], (2, 100))[0]
         im_nA = np.reshape(data[:, 0], (100, 1))
         y = np.reshape(data[:, 1], (100, 1))
-        X = im_nA  # np.concatenate((im_nA), np.ones((100, 1))), 1)
-        slope_test, intercept_test, __, __, __ = scipy.stats.linregress(im_nA[:, 0], y[:, 0])
+        X = np.hstack([im_nA, np.ones((im_nA.size, 1))])
 
         # calculate OLS estimator and compare
         I = np.linalg.inv
-        beta = I(X.T@X) @ X.T@y
+        slope_test, intercept_test = I(X.T@X) @ X.T@y
 
         im_pA = im_nA * 1000
-        slope, intercept = current_calc.calculate_input_resistance(im_pA.squeeze(),
-                                                                   y.squeeze())
+        slope, intercept = current_calc.calculate_input_resistance(im_pA.squeeze(), y.squeeze())
         assert utils.allclose(slope, slope_test, 1e-10)
         assert utils.allclose(intercept, intercept_test, 1e-10)
 

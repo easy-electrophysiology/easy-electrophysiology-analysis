@@ -21,6 +21,8 @@ from sklearn.metrics import mean_squared_error
 import pandas as pd
 os.environ["PYTEST_QT_API"] = "pyside2"
 
+SPEED = "fast"
+
 class TestEvents:
 
     @pytest.fixture(scope="function", params=["multi_record", "one_record"], ids=["multi_record", "one_record"])
@@ -28,6 +30,7 @@ class TestEvents:
         tgui = GuiTestSetup("artificial_events_" + request.param)
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data("cumulative", analysis_type="events_" + request.param)
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -36,25 +39,6 @@ class TestEvents:
     # --------------------------------------------------------------------------------------------------------------------------------------
     # Test Kolmogorov-Smirnov
     # --------------------------------------------------------------------------------------------------------------------------------------
-
-    def load_ks_test_data(self, tgui):
-        data_path = tgui.test_base_dir + "/ks_test_data.csv"
-        data = pd.read_csv(data_path)
-        return data.to_numpy()
-
-    def get_ks_test_results_from_gui(self, dialog):
-        """
-        """
-        results = {}
-        results["name_1"] = dialog.dia.results_list_widget.item(1).text().split(": ")[1]
-        results["name_2"] = dialog.dia.results_list_widget.item(2).text().split(": ")[1]
-        results["hypothesis"] = dialog.dia.results_list_widget.item(3).text().split(": ")[1]
-
-        results["n"] = dialog.dia.results_list_widget.item(5).text().split("= ")[1]
-        results["D"] = dialog.dia.results_list_widget.item(6).text().split("= ")[1]
-        results["p"] = dialog.dia.results_list_widget.item(7).text().split("= ")[1]
-
-        return results
 
     def test_ks_test_gui(self, tgui):
 
@@ -86,6 +70,112 @@ class TestEvents:
         for idx, option in enumerate(["two-sided", "greater", "less"]):
             tgui.set_combobox(dialog.dia.alternative_hypothesis_combobox, idx=idx)
             assert dialog.alternative_hypothesis == option
+
+        del dialog
+
+    def test_one_dataset_ks_test_lillifores(self, tgui):
+        """
+        p is derived from intepolating the distribution from monte-carlo simulations
+        as such p values do not match exactly.
+
+        SPSS: D = 0.012 p = 0.983
+        MATLAB: D = 0.0122 p = 0.9837
+        """
+        dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui, provide_parameters=False)
+
+        results = self.get_ks_test_results_from_gui(dialog)
+
+        assert results["name_1"] == "Dataset 1"
+        assert results["name_2"] == "Normal CDF"
+        assert results["hypothesis"] == "Two-Tailed"
+
+        assert results["n"] == "1000"
+        assert results["D"] == "0.0122"
+        assert results["p"] == "0.98894247"
+
+        del dialog
+
+    def test_one_dataset_ks_test_provide_parameters(self, tgui):
+        """
+        see test_one_dataset_ks_test_lillifores()
+
+        SPSS: D = 0.021, p = 0.751
+
+        MATLAB: D = 0.214 p = 0.7427
+        """
+        dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui, provide_parameters=True)
+
+        results = self.get_ks_test_results_from_gui(dialog)
+
+        assert results["name_1"] == "Dataset 1"
+        assert results["name_2"] == "Normal CDF"
+        assert results["hypothesis"] == "Two-Tailed"
+
+        tgui.enter_number_into_spinbox(dialog.dia.one_dataset_sample_mean_spinbox, 0)
+        tgui.enter_number_into_spinbox(dialog.dia.one_dataset_sample_stdev_spinbox, 1)
+        tgui.left_mouse_click(dialog.dia.run_analysis_button)
+
+        results = self.get_ks_test_results_from_gui(dialog)
+
+        assert results["n"] == "1000"
+        assert results["D"] == "0.0214"
+        assert results["p"] == "0.74268437"
+
+        del dialog
+
+    @pytest.mark.parametrize("hypothesis", ["two-sided", "greater", "less"])  # TODO: all these tests will run twice with cumulative vs. normalised - is this necessary?
+    def test_two_dataset_ks_test(self, tgui, hypothesis):
+        """
+        SPSS unequal:  D = 0.029 p = 0.794
+             larger:   D = 0.029
+             smaller:  D = -0.021
+        MATLAB unequal: D = 0.029, p = 0.7888
+               larger:  D = 0.029, p = 0. 0.4272
+               smaller: D = 0.021, p = 0.6402
+        """
+        dialog, data = self.setup_and_fill_ks_test_two_dataset(tgui, hypothesis=hypothesis)
+        D, p, name = self.get_hypothesis_results(hypothesis)
+
+        results = self.get_ks_test_results_from_gui(dialog)
+
+        assert results["name_1"] == "Dataset 1"
+        assert results["name_2"] == "Dataset 2"
+        assert results["hypothesis"] == name
+
+        p, D = self.get_two_ks_test_result(hypothesis)
+
+        assert results["n"] == "1000"
+        assert results["D"] == p
+        assert results["p"] == D
+
+        del dialog
+
+    def test_ks_test_not_enough_variance_1d(self, tgui):
+
+        QtCore.QTimer.singleShot(1000, lambda: self.check_data_enough_variance(tgui))
+        self.setup_and_fill_ks_test_one_dataset(tgui,
+                                                user_data=np.atleast_2d([0, 0, 0, 0]).T)
+
+# KS Test Utils ----------------------------------------------------------------------------------------------------------------------
+
+    def load_ks_test_data(self, tgui):
+        data_path = tgui.test_base_dir + "/ks_test_data.csv"
+        data = pd.read_csv(data_path)
+        return data.to_numpy()
+
+    def get_ks_test_results_from_gui(self, dialog):
+        """
+        """
+        results = {}
+        results["name_1"] = dialog.dia.results_list_widget.item(1).text().split(": ")[1]
+        results["name_2"] = dialog.dia.results_list_widget.item(2).text().split(": ")[1]
+        results["hypothesis"] = dialog.dia.results_list_widget.item(3).text().split(": ")[1]
+
+        results["n"] = dialog.dia.results_list_widget.item(5).text().split("= ")[1]
+        results["D"] = dialog.dia.results_list_widget.item(6).text().split("= ")[1]
+        results["p"] = dialog.dia.results_list_widget.item(7).text().split("= ")[1]
+
+        return results
 
     def setup_ks_test_widgets_and_data(self, tgui):
         """
@@ -138,52 +228,6 @@ class TestEvents:
 
         return dialog, data
 
-    def test_one_dataset_ks_test_lillifores(self, tgui):
-        """
-        p is derived from intepolating the distribution from monte-carlo simulations
-        as such p values do not match exactly.
-
-        SPSS: D = 0.012 p = 0.983
-        MATLAB: D = 0.0122 p = 0.9837
-        """
-        dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui, provide_parameters=False)
-
-        results = self.get_ks_test_results_from_gui(dialog)
-
-        assert results["name_1"] == "Dataset 1"
-        assert results["name_2"] == "Normal CDF"
-        assert results["hypothesis"] == "Two-Tailed"
-
-        assert results["n"] == "1000"
-        assert results["D"] == "0.0122"
-        assert results["p"] == "0.98894247"
-
-    def test_one_dataset_ks_test_provide_parameters(self, tgui):
-        """
-        see test_one_dataset_ks_test_lillifores()
-
-        SPSS: D = 0.021, p = 0.751
-
-        MATLAB: D = 0.214 p = 0.7427
-        """
-        dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui, provide_parameters=True)
-
-        results = self.get_ks_test_results_from_gui(dialog)
-
-        assert results["name_1"] == "Dataset 1"
-        assert results["name_2"] == "Normal CDF"
-        assert results["hypothesis"] == "Two-Tailed"
-
-        tgui.enter_number_into_spinbox(dialog.dia.one_dataset_sample_mean_spinbox, 0)
-        tgui.enter_number_into_spinbox(dialog.dia.one_dataset_sample_stdev_spinbox, 1)
-        tgui.left_mouse_click(dialog.dia.run_analysis_button)
-
-        results = self.get_ks_test_results_from_gui(dialog)
-
-        assert results["n"] == "1000"
-        assert results["D"] == "0.0214"
-        assert results["p"] == "0.74268437"
-
     def get_hypothesis_results(self, hypothesis):
         """
         """
@@ -196,31 +240,6 @@ class TestEvents:
 
         return D, p, name
 
-    @pytest.mark.parametrize("hypothesis", ["two-sided", "greater", "less"])  # TODO: all these tests will run twice with cumulative vs. normalised - is this necessary?
-    def test_two_dataset_ks_test(self, tgui, hypothesis):
-        """
-        SPSS unequal:  D = 0.029 p = 0.794
-             larger:   D = 0.029
-             smaller:  D = -0.021
-        MATLAB unequal: D = 0.029, p = 0.7888
-               larger:  D = 0.029, p = 0. 0.4272
-               smaller: D = 0.021, p = 0.6402
-        """
-        dialog, data = self.setup_and_fill_ks_test_two_dataset(tgui, hypothesis=hypothesis)
-        D, p, name = self.get_hypothesis_results(hypothesis)
-
-        results = self.get_ks_test_results_from_gui(dialog)
-
-        assert results["name_1"] == "Dataset 1"
-        assert results["name_2"] == "Dataset 2"
-        assert results["hypothesis"] == name
-
-        p, D = self.get_two_ks_test_result(hypothesis)
-
-        assert results["n"] == "1000"
-        assert results["D"] == p
-        assert results["p"] == D
-
     def get_two_ks_test_result(self, hypothesis):
 
         results = {
@@ -232,45 +251,13 @@ class TestEvents:
         p, D = results[hypothesis]
         return p, D
 
-    def test_ks_test_not_enough_samples_1d(self, tgui):
-
-        QtCore.QTimer.singleShot(1000, lambda: self.check_not_enough_samples_1d(tgui))
-        self.setup_and_fill_ks_test_one_dataset(tgui,
-                                                user_data=np.atleast_2d([0, 1, 2]).T)
-
     def check_not_enough_samples_1d(self, tgui):
         assert "Ensure data has at least 4 observations" in tgui.mw.messagebox.text()
         tgui.mw.messagebox.close()
 
-    def test_ks_test_not_enough_variance_1d(self, tgui):
-
-        QtCore.QTimer.singleShot(1000, lambda: self.check_data_enough_variance(tgui))
-        self.setup_and_fill_ks_test_one_dataset(tgui,
-                                                user_data=np.atleast_2d([0, 0, 0, 0]).T)
-
     def check_data_enough_variance(self, tgui):
         assert "Could not run KS test, check inputs are valid." in tgui.mw.messagebox.text()
         tgui.mw.messagebox.close()
-
-    @pytest.mark.parametrize("uneven_data", [[[0, 0, 0, 0], [0, 0, 0]],
-                                             [[0, 0, 0], [0, 0, 0, 0]],
-                                             [[0, 0, 0], [0, 0, 0]]])
-    def test_ks_test_not_enough_samples_2d(self, tgui, uneven_data):
-        """
-        """
-        dialog, data, table = self.setup_ks_test_widgets_and_data(tgui)
-
-        tgui.switch_groupbox(dialog.dia.two_datasets_groupbox, on=True)
-
-        for row, input in enumerate(uneven_data[0]):  # RENAME
-            table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(input)))
-
-        for row, input in enumerate(uneven_data[1]):
-            table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(input)))
-
-        QtCore.QTimer.singleShot(1000, lambda: self.check_not_enough_samples_2d(tgui))
-        tgui.left_mouse_click(dialog.dia.run_analysis_button)
-        dialog.close()  # TODO: remove if does not help
 
     def check_not_enough_samples_2d(self, tgui):
         assert "Ensure data has at least 4 observations." in tgui.mw.messagebox.text()
@@ -279,6 +266,27 @@ class TestEvents:
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Frequency Data Tests - Unit Tests
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
+    @pytest.mark.parametrize("one_or_two_dataset", ["one_dataset", "two_dataset_1", "two_dataset_2"])
+    def test_ks_plot_copy_data(self, tgui, cum_prob_or_hist, one_or_two_dataset):
+        """
+        """
+        if "one_dataset" in one_or_two_dataset:
+            dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui)
+        else:
+            dialog, data = self.setup_and_fill_ks_test_two_dataset(tgui)
+
+        plot_dialog, plot_x, plot_y = self.open_plot_and_get_data(tgui, dialog, one_or_two_dataset, plot_type=cum_prob_or_hist)
+
+        dataset = "2" if one_or_two_dataset == "two_dataset_2" else "1"
+        plot_dialog.handle_copy_dataset(dataset)
+        clipboard_data = pd.read_clipboard()
+
+        assert utils.allclose(plot_x, clipboard_data.iloc[:, 0], 1e-10)
+        assert utils.allclose(plot_y, clipboard_data.iloc[:, 1], 1e-10)
+
+        del dialog
 
     def open_plot_and_get_data(self, tgui, dialog, one_or_two_dataset, plot_type="cum_prob"):
 
@@ -321,26 +329,6 @@ class TestEvents:
         bin_size = label.split("Bin Size: ")[1]
         return float(bin_size)
 
-    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
-    @pytest.mark.parametrize("one_or_two_dataset", ["one_dataset", "two_dataset_1", "two_dataset_2"])
-    def test_ks_plot_copy_data(self, tgui, cum_prob_or_hist, one_or_two_dataset):
-        """
-        """
-
-        if "one_dataset" in one_or_two_dataset:
-            dialog, data = self.setup_and_fill_ks_test_one_dataset(tgui)
-        else:
-            dialog, data = self.setup_and_fill_ks_test_two_dataset(tgui)
-
-        plot_dialog, plot_x, plot_y = self.open_plot_and_get_data(tgui, dialog, one_or_two_dataset, plot_type=cum_prob_or_hist)
-
-        dataset = "2" if one_or_two_dataset == "two_dataset_2" else "1"
-        plot_dialog.handle_copy_dataset(dataset)
-        clipboard_data = pd.read_clipboard()
-
-        assert utils.allclose(plot_x, clipboard_data.iloc[:, 0], 1e-10)
-        assert utils.allclose(plot_y, clipboard_data.iloc[:, 1], 1e-10)
-
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Frequency Data Tests - Unit Tests
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -377,20 +365,6 @@ class TestEvents:
 
         assert np.array_equal(processed_data, np.array([1, 1, 2, 2, 3, 3]))
         assert sort_idx == ["1-2", "2-3", "4-5", "5-6", "7-8", "8-9"]
-
-    def make_peak_time_event_info(self, peak_times, peak_idxs=False):
-        event_info = [{} for rec in range(len(peak_times))]
-        for rec in range(len(peak_times)):
-            for idx in range(len(peak_times[rec])):
-
-                peak_time = peak_times[rec][idx]
-
-                if ~np.isnan(peak_time):
-                    event_info[rec][str(peak_time)] = {"peak": {"time": peak_time}}
-                    if np.any(peak_idxs):
-                        event_info[rec][str(peak_time)]["peak"]["idx"] = peak_idxs[rec][idx]
-
-        return event_info
 
     def test_process_amplitude_for_frequency_table(self):
         """
@@ -437,6 +411,7 @@ class TestEvents:
 
         settings = {"binning_method": "custom_binsize",
                     "custom_binsize": {"test_parameter": 10}}
+
         assert 100 == core_analysis_methods.get_num_bins_from_settings(data, settings, parameter="test_parameter")
 
         settings["custom_binsize"]["test_parameter"] = 10000
@@ -500,7 +475,6 @@ class TestEvents:
         assert binsize == np.diff(np.histogram(data)[1])[0]
         assert num_bins == 10
 
-
     def test_format_bin_edges(self):
         bin_edges = np.array([0, 1, 2, 3, 4, 5, 6])
 
@@ -515,6 +489,22 @@ class TestEvents:
         center_bin_edges = core_analysis_methods.format_bin_edges(bin_edges, "bin_centre")
         np.array_equal(center_bin_edges,
                        np.array([np.mean([0, 1]), np.mean([1, 2]), np.mean([2, 3]), np.mean([3, 4]), np.mean([4, 5]), np.mean([5, 6])]))
+
+# Frequency Data Test Utils ----------------------------------------------------------------------------------------------------------------------------------------
+
+    def make_peak_time_event_info(self, peak_times, peak_idxs=False):
+        event_info = [{} for rec in range(len(peak_times))]
+        for rec in range(len(peak_times)):
+            for idx in range(len(peak_times[rec])):
+
+                peak_time = peak_times[rec][idx]
+
+                if ~np.isnan(peak_time):
+                    event_info[rec][str(peak_time)] = {"peak": {"time": peak_time}}
+                    if np.any(peak_idxs):
+                        event_info[rec][str(peak_time)]["peak"]["idx"] = peak_idxs[rec][idx]
+
+        return event_info
 
     def get_test_frequency_data(self, tgui, analysis_type):
         if analysis_type == "frequency":
@@ -539,86 +529,66 @@ class TestEvents:
                 params = np.abs(tgui.adata.b1 * tgui.adata.b1_offsets)
 
             elif analysis_type == "rise_time":
-                params = ((
-                                      tgui.adata.rise_samples * 0.79) * tgui.adata.ts) * 1000  # note rise times are all the same even if adjusting so this is not a great test   MAKE OWN FUNCTION
+                params = ((tgui.adata.rise_samples * 0.79) * tgui.adata.ts) * 1000  # note rise times are all the same even if adjusting so this is not a great test   MAKE OWN FUNCTION
                 params = np.repeat(params, tgui.adata.num_events())  # but will be correct if all others are, all other params are variable
 
             elif analysis_type == "decay_amplitude_percent":
                 params = tgui.adata.get_all_decay_times()  # COMBEBINE WITH ABOVE?
 
+            elif analysis_type == "event_time":
+                peak_times = tgui.adata.peak_times["cumulative"]
+                params = peak_times[~np.isnan(peak_times)]
+
             elif analysis_type == "decay_tau":
                 test_tau_samples = tgui.adata.tau * tgui.adata.tau_offsets  # COMBEBINE WITH ABOVE?
                 params = test_tau_samples * tgui.adata.ts * 1000
+
+            if analysis_type == "biexp_rise":
+                biexp_rise_samples = (tgui.adata.rise * np.squeeze(tgui.adata.rise_offsets)) # TODO: copied directly from test_events()
+                params = biexp_rise_samples* tgui.adata.ts * 1000
+
+            if analysis_type == "biexp_decay":
+                biexp_decay_samples = tgui.adata.decay * np.squeeze(tgui.adata.decay_offsets)
+                params = biexp_decay_samples * tgui.adata.ts * 1000
 
             labels = [ev_idx + 1 for ev_idx in range(tgui.adata.num_events())]
 
         return params, labels
 
-    def set_frequency_data_table(self, tgui, analysis_type):
-        """
-        """
-        if analysis_type == "frequency":
-            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_frequency_checkbox, on=True)
-        elif analysis_type == "amplitude":
-            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_amplitude_checkbox, on=True)
-        elif analysis_type == "rise_time":
-            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_rise_time_checkbox, on=True)
-        elif analysis_type == "decay_amplitude_percent":
-            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_decay_percent_checkbox, on=True)
-        elif analysis_type == "decay_tau":
-            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_all_fits_checkbox,
-                                 on=True)  # cant switch to combobox 0 because in doing so it pops to idx 1 which creates biexp not fit warning
-
-        QtWidgets.QApplication.processEvents()
-
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Frequency Data Tests - Gui and Plots
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-    # Plots -
-    # Check all data is shown correctly on table
-    # is there a way to intergrate below to check all binning methods?
-    # do plot options already exist? if not, these can be checked manually. Are the configs shared!??! (yes) (so just need to check 'KS test' options - is this done already?
+    def check_summary_statistics(self, tgui, start_col, test_data):
 
-    @pytest.mark.parametrize("analysis_type", ["frequency", "amplitude", "rise_time", "decay_amplitude_percent", "decay_tau"])
-    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
-    def test_cumulative_frequecy_for_all_params(self, tgui, analysis_type, cum_prob_or_hist):
-        """
-        """
-        for filenum in range(2):
-            tgui.update_events_to_varying_amplitude_and_tau()
+        tgui.switch_mw_tab(1)
 
-            custom_binnum = int(tgui.adata.num_events() / 2)
-            tgui.mw.cfgs.events["frequency_data_options"]["plot_type"] = cum_prob_or_hist
-            tgui.mw.cfgs.events["frequency_data_options"]["binning_method"] = "custom_binnum"
-            tgui.mw.cfgs.events["frequency_data_options"]["custom_binnum"] = custom_binnum
+        table = tgui.mw.mw.table_tab_tablewidget
+        M_label = table.item(table.rowCount() - 3, start_col).text()
+        SD_label = table.item(table.rowCount() - 2, start_col).text()
+        SE_label = table.item(table.rowCount() - 1, start_col).text()
 
-            tgui.run_artificial_events_analysis(tgui, "template")
-            tgui.switch_mw_tab(1)
+        assert M_label.strip() == "M"
+        assert SD_label.strip() == "SD"
+        assert SE_label.strip() == "SE"
 
-            self.set_frequency_data_table(tgui, analysis_type)
+        M = float(table.item(table.rowCount() - 3, start_col + 1).text())
+        SD = float(table.item(table.rowCount() - 2, start_col + 1).text())
+        SE = float(table.item(table.rowCount() - 1, start_col + 1).text())
 
-            frequency_data = tgui.get_frequency_data_from_qtable(analysis_type, 0, tgui.adata.num_events())
-            flattened_params, flattened_labels = self.get_test_frequency_data(tgui, analysis_type)
-
-            cum_probs, bin_edges = self.run_tests_all_frequency_data(tgui, analysis_type, frequency_data,
-                                                                     flattened_params, flattened_labels,
-                                                                     custom_binnum, cum_prob_or_hist)
-
-            self.run_tests_frequency_data_plot(tgui, bin_edges, cum_probs, analysis_type, cum_prob_or_hist)
-            tgui.mw.mw.actionBatch_Mode_ON.trigger()
-            tgui.setup_artificial_data("cumulative", analysis_type=tgui.analysis_type)
-        tgui.shutdown()
+        assert utils.allclose(M, np.mean(test_data), 1e-8)
+        assert utils.allclose(SD, np.std(test_data, ddof=1), 1e-8)
+        assert utils.allclose(SE, np.std(test_data, ddof=1) / np.sqrt(test_data.size), 1e-8)
 
     def run_tests_frequency_data_plot(self, tgui, bin_edges, cum_probs, analysis_type, cum_prob_or_hist):
         """
         """
         tgui.left_mouse_click(tgui.mw.mw.plot_cumulative_probability_button)
 
-        analysis_idx = {"frequency": 0, "amplitude": 1, "rise_time": 2, "decay_amplitude_percent": 3, "decay_tau": 4}
+        analysis_idx = {"frequency": 0, "amplitude": 1, "rise_time": 2, "decay_amplitude_percent": 3, "event_time": 4, "decay_tau": 5, "biexp_rise": 6, "biexp_decay": 7}
         idx = analysis_idx[analysis_type]
 
-        tgui.set_combobox(tgui.mw.loaded_file.cumulative_frequency_plot_dialog.dia.data_to_show_combobox, idx)
+        tgui.mw.loaded_file.cumulative_frequency_plot_dialog.dia.data_to_show_combobox.setCurrentIndex(idx)
 
         plot_x, plot_y = self.get_frequency_plot_data(tgui, cum_prob_or_hist, "x_and_y")
 
@@ -640,7 +610,7 @@ class TestEvents:
         # Check data used to calculate frequencies is correct
         assert utils.allclose(frequency_data[1],
                               sorted_param,
-                              1e-10), "parameter data " + analysis_type
+                              1e-8), "parameter data " + analysis_type
 
         bin_edges = np.array([num for num in frequency_data[3] if num != ""])
         test_bin_edges = np.histogram(frequency_data[1], bins=custom_binnum)[1]
@@ -654,13 +624,19 @@ class TestEvents:
             "bin edges " + analysis_type
 
         # Test Labels
-        if analysis_type in ["rise_time", "decay_amplitude_percent", "decay_tau"]:
+        if analysis_type in ["rise_time", "decay_amplitude_percent", "event_time", "decay_tau", "biexp_rise", "biexp_decay"]:
             if analysis_type == "rise_time":
                 true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("rise", "rise_time_ms")
             elif analysis_type == "decay_amplitude_percent":
                 true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("decay_perc", "decay_time_ms")
+            elif analysis_type == "event_time":
+                true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("peak", "time")
             elif analysis_type == "decay_tau":
                 true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("monoexp_fit", "tau_ms")
+            elif analysis_type == "biexp_rise":
+                true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("biexp_fit", "rise_ms")
+            elif analysis_type == "biexp_decay":
+                true_param = tgui.mw.loaded_file.make_list_from_event_info_all_recs("biexp_fit", "decay_ms")
 
             sort_idx = np.argsort(true_param)
             sorted_labels = [flattened_labels[i] for i in sort_idx]
@@ -683,7 +659,77 @@ class TestEvents:
 # Test Sort  by event number
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def get_frequency_data_table(self, tgui, files, analysis_type):  # TODO: this must be somewhere?!?!
+    @pytest.mark.parametrize("biexp", [True, False])
+    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
+    def test_sort_by_event_number(self, tgui, cum_prob_or_hist, biexp):
+        """
+        Run events and check cum prob for all events matches main table when both sorted
+        and unsorted
+        """
+        if tgui.test_filetype == "artificial_events_one_record":
+            return
+
+        tgui.mw.cfgs.events["frequency_data_options"]["plot_type"] = cum_prob_or_hist
+
+        num_recs = self.run_three_events_files_for_frequency_data_tests(tgui, biexp)
+
+        if biexp:
+            analysis_type_info = {
+                "biexp_rise": [14, 31, 48],
+                "biexp_decay": [15, 32, 49],
+            }
+
+        else:
+            analysis_type_info = {
+                "event_time": [3, 19, 35],  # same as frequency, not subtracted, easier to have as separate key
+                "frequency": [3, 19, 35],  # hard coded
+                "amplitude": [6, 22, 38],
+                "rise_time": [7, 23, 39],
+                "decay_amplitude_percent": [9, 25, 41],
+                "decay_tau": [14, 30, 46],
+            }
+
+        files = ["file_0", "file_1", "file_2"]
+
+        main_table_data = {}
+        for analysis_type, table_col in analysis_type_info.items():
+
+            # Save the main table
+            main_table_data[analysis_type] = {}
+            for file, col in zip(files, table_col):
+
+                table_data = []
+                for row in range(2, tgui.mw.mw.table_tab_tablewidget.rowCount()):
+                    try:
+                        data = tgui.mw.mw.table_tab_tablewidget.item(row, col).data(0)  # skip empty cells
+                    except:
+                        continue
+                    table_data.append(float(data))
+
+                main_table_data[analysis_type][file] = np.array(table_data)
+
+        for analysis_type in analysis_type_info.keys():
+            # for each analysis type, check that the cum prob matches the main table data, when both
+            # sorted and unsorted.
+            tgui.set_frequency_data_table(tgui, analysis_type)
+
+            frequency_data_table = self.get_frequency_data_table(tgui, files, analysis_type)
+            unsorted_cum_prob_columns = frequency_data_table
+
+            self.check_main_table_vs_frequency_data(tgui, files, num_recs, analysis_type, main_table_data, frequency_data_table, sort_main_table=True)
+
+            tgui.mw.update_table_sort_cum_prob("event_num")
+
+            frequency_data_table = self.get_frequency_data_table(tgui, files, analysis_type)
+
+            self.check_main_table_vs_frequency_data(tgui, files, num_recs, analysis_type, main_table_data, frequency_data_table, sort_main_table=False)
+
+            for file in files:
+                assert np.array_equal(unsorted_cum_prob_columns[file][:, 2:], frequency_data_table[file][:, 2:], equal_nan=True)  # check cum prob and bins remain unchanged
+                assert np.array_equal(unsorted_cum_prob_columns[file][:, 3:], frequency_data_table[file][:, 3:], equal_nan=True)
+            tgui.mw.update_table_sort_cum_prob("parameter")
+
+    def get_frequency_data_table(self, tgui, files, analysis_type):  # TODO: this is similar to setup_test_suite.get_frequency_data_from_qtable()
         """
         """
         frequency_data_table = {}
@@ -691,7 +737,7 @@ class TestEvents:
         for file in files:
             file_table_data = utils.np_empty_nan((tgui.mw.mw.table_tab_tablewidget.rowCount() - 2, 4))  # TODO: table var
             for col_idx, col in enumerate(range(start_col, start_col + 4)):
-                for row_idx, row in enumerate(range(2, tgui.mw.mw.table_tab_tablewidget.rowCount())):
+                for row_idx, row in enumerate(range(2, tgui.mw.mw.table_tab_tablewidget.rowCount() - 4)):  # ignore summary statistcs
 
                     try:
                         data = tgui.mw.mw.table_tab_tablewidget.item(row, col).data(0)
@@ -747,91 +793,9 @@ class TestEvents:
                 assert np.array_equal(tgui.clean(frequency_data[:, 1]), np.abs(main_data[sort_idx]))
                 assert np.array_equal(tgui.clean(frequency_data[:, 0]), num_recs[sort_idx])
 
-    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
-    def test_sort_by_event_number(self, tgui, cum_prob_or_hist):
-        """
-        Run events and check cum prob for all events matches main table when both sorted
-        and unsorted
-        # TODO: test biexp
-        """
-        if tgui.test_filetype == "artificial_events_one_record":
-            return
-
-        tgui.mw.cfgs.events["frequency_data_options"]["plot_type"] = cum_prob_or_hist
-
-        num_recs = self.run_three_events_files_for_frequency_data_tests(tgui)
-
-        analysis_type_info = {
-                            "frequency": [3, 19, 35],  # hard coded
-                            "amplitude": [6, 22, 38],
-                            "rise_time": [7, 23, 39],
-                            "decay_amplitude_percent": [9, 25, 41],
-                            "decay_tau": [14, 30, 46],
-        }
-        files = ["file_0", "file_1", "file_2"]
-
-        main_table_data = {}
-        for analysis_type, table_col in analysis_type_info.items():
-
-            # Save the main table
-            main_table_data[analysis_type] = {}
-            for file, col in zip(files, table_col):
-
-                table_data = []
-                for row in range(2, tgui.mw.mw.table_tab_tablewidget.rowCount()):
-                    try:
-                        data = tgui.mw.mw.table_tab_tablewidget.item(row, col).data(0)  # skip empty cells
-                    except:
-                        continue
-                    table_data.append(float(data))
-
-                main_table_data[analysis_type][file] = np.array(table_data)
-
-        for analysis_type in analysis_type_info.keys():
-            # for each analysis type, check that the cum prob matches the main table data, when both
-            # sorted and unsorted.
-            self.set_frequency_data_table(tgui, analysis_type)
-
-            frequency_data_table = self.get_frequency_data_table(tgui, files, analysis_type)
-            unsorted_cum_prob_columns = frequency_data_table
-
-            self.check_main_table_vs_frequency_data(tgui, files, num_recs, analysis_type, main_table_data, frequency_data_table, sort_main_table=True)
-
-            tgui.mw.update_table_sort_cum_prob("event_num")
-
-            frequency_data_table = self.get_frequency_data_table(tgui, files, analysis_type)
-
-            self.check_main_table_vs_frequency_data(tgui, files, num_recs, analysis_type, main_table_data, frequency_data_table, sort_main_table=False)
-
-            for file in files:
-                assert np.array_equal(unsorted_cum_prob_columns[file][:, 2:], frequency_data_table[file][:, 2:], equal_nan=True)  # check cum prob and bins remain unchanged
-                assert np.array_equal(unsorted_cum_prob_columns[file][:, 3:], frequency_data_table[file][:, 3:], equal_nan=True)
-            tgui.mw.update_table_sort_cum_prob("parameter")
-
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Frequency Data Tests - plot batch file checks
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
-    def run_three_events_files_for_frequency_data_tests(self, tgui):
-        """
-        """
-        num_recs = []
-
-        tgui.mw.mw.actionBatch_Mode_ON.trigger()
-        tgui.run_artificial_events_analysis(tgui, "threshold")
-        num_recs.append(tgui.mw.loaded_file.data.num_recs)
-
-        tgui.load_a_filetype("voltage_clamp_1_record")
-        tgui.run_artificial_events_analysis(tgui, "threshold")
-        num_recs.append(tgui.mw.loaded_file.data.num_recs)
-
-        tgui.load_a_filetype("voltage_clamp_multi_record_events")
-        tgui.run_artificial_events_analysis(tgui, "threshold")
-        num_recs.append(tgui.mw.loaded_file.data.num_recs)
-
-        tgui.switch_mw_tab(1)
-
-        return num_recs
 
     @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
     def test_batch_mode_frequency_data_plot_filecheck(self, tgui, cum_prob_or_hist):  # TODO: can test bin size here too
@@ -844,12 +808,12 @@ class TestEvents:
 
         self.run_three_events_files_for_frequency_data_tests(tgui)
 
-        for analysis_type in ["frequency", "amplitude", "rise_time", "decay_amplitude_percent", "decay_tau"]:
+        for analysis_type in ["frequency", "amplitude", "rise_time", "decay_amplitude_percent", "event_time", "decay_tau"]:
 
-            self.set_frequency_data_table(tgui, analysis_type)
+            tgui.set_frequency_data_table(tgui, analysis_type)
             tgui.left_mouse_click(tgui.mw.mw.plot_cumulative_probability_button)
 
-            analysis_idx = {"frequency": 0, "amplitude": 1, "rise_time": 2, "decay_amplitude_percent": 3, "decay_tau": 4}
+            analysis_idx = {"frequency": 0, "amplitude": 1, "rise_time": 2, "decay_amplitude_percent": 3, "event_time": 4, "decay_tau": 5}
             idx = analysis_idx[analysis_type]
             tgui.set_combobox(tgui.mw.loaded_file.cumulative_frequency_plot_dialog.dia.data_to_show_combobox, idx)
 
@@ -869,10 +833,33 @@ class TestEvents:
             QtWidgets.QApplication.processEvents()
 
             tgui.set_combobox(dialog.dia.file_to_plot_combobox, 0)
-            assert dialog.dia.file_to_plot_combobox.currentText() == "light_events_per_rec"
+            assert dialog.dia.file_to_plot_combobox.currentText() == "fake_data_name"
             assert np.array_equal(self.get_frequency_plot_data(tgui, cum_prob_or_hist, "y"), self.quick_get_table_column_data(tgui, 2)), "yData 0 " + analysis_type
             assert np.array_equal(self.get_frequency_plot_data(tgui, cum_prob_or_hist, "x"), self.quick_get_table_column_data(tgui, 3)), "xData 0 " + analysis_type
             QtWidgets.QApplication.processEvents()
+
+        del dialog
+
+    def run_three_events_files_for_frequency_data_tests(self, tgui, biexp=False):
+        """
+        """
+        num_recs = []
+
+        tgui.mw.mw.actionBatch_Mode_ON.trigger()
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp)
+        num_recs.append(tgui.mw.loaded_file.data.num_recs)
+
+        tgui.load_a_filetype("voltage_clamp_1_record")
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp)
+        num_recs.append(tgui.mw.loaded_file.data.num_recs)
+
+        tgui.load_a_filetype("voltage_clamp_multi_record_events")
+        tgui.run_artificial_events_analysis(tgui, "threshold", biexp=biexp)
+        num_recs.append(tgui.mw.loaded_file.data.num_recs)
+
+        tgui.switch_mw_tab(1)
+
+        return num_recs
 
     def get_frequency_plot_data(self, tgui, cum_prob_or_hist, x_or_y):
         """
@@ -901,6 +888,11 @@ class TestEvents:
                 pass
         return np.array(col_items)
 
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Tests that can crash due to undiagnossed memory access tests
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    @pytest.mark.may_crash
     @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
     @pytest.mark.parametrize("bin_edge_setting", [["bin_centre", 0], ["left_edge", 1], ["right_edge", 2]])
     @pytest.mark.parametrize("one_or_two_dataset", ["one_dataset", "two_dataset_1", "two_dataset_2"])
@@ -930,8 +922,6 @@ class TestEvents:
 
         test_num_bins = len(np.histogram_bin_edges(data, bins="auto"))
         assert test_num_bins == len(plot_x)
-        assert not plot_dialog.dia.bin_size_spinbox.isEnabled()
-        assert plot_dialog.dia.bin_size_spinbox.text() == str(test_num_bins)
         assert np.isclose(self.plot_label(plot_dialog), bin_size, 1e-2)
         assert np.array_equal(y_values, plot_y)
         assert np.array_equal(x_values, plot_x)
@@ -945,8 +935,6 @@ class TestEvents:
         plot_dialog, plot_x, plot_y = self.open_plot_and_get_data(tgui, dialog, one_or_two_dataset, plot_type=cum_prob_or_hist)
         y_values, x_values, bin_size, __ = self.run_test_ks_frequency_data(data, "custom_binnum", cum_prob_or_hist, bin_edge, custom_binnum=50)
 
-        assert plot_dialog.dia.bin_size_spinbox.isEnabled()
-        assert plot_dialog.dia.bin_size_spinbox.text() == "50"
         assert np.isclose(self.plot_label(plot_dialog), bin_size, 1e-2)
         assert len(plot_x) == 50
         assert np.array_equal(y_values, plot_y)
@@ -957,7 +945,7 @@ class TestEvents:
         plot_dialog.close()
         test_interval = 0.1
         tgui.set_combobox(options_dialog.dia.binning_method_combobox, 2)
-        tgui.set_combobox(options_dialog.dia.custom_binsizes_combobox, 7)
+        tgui.set_combobox(options_dialog.dia.custom_binsizes_combobox, 8)
         tgui.enter_number_into_spinbox(options_dialog.dia.custom_binsizes_spinbox, test_interval)
 
         plot_dialog, plot_x, plot_y = self.open_plot_and_get_data(tgui, dialog, one_or_two_dataset, plot_type=cum_prob_or_hist)
@@ -966,8 +954,6 @@ class TestEvents:
         x_inter_bin_interval = scipy.stats.mode(np.diff(plot_x))[0]
         assert np.isclose(x_inter_bin_interval, test_interval, 1e-2)
         assert np.isclose(self.plot_label(plot_dialog), test_interval, 1e-2)
-        assert not plot_dialog.dia.bin_size_spinbox.isEnabled()
-        assert plot_dialog.dia.bin_size_spinbox.text() == str(num_bins)
         assert np.array_equal(y_values, plot_y)
         assert np.array_equal(x_values, plot_x)
 
@@ -981,11 +967,87 @@ class TestEvents:
         plot_dialog, plot_x, plot_y = self.open_plot_and_get_data(tgui, dialog, one_or_two_dataset, plot_type=cum_prob_or_hist)
         y_values, x_values, bin_size, num_bins = self.run_test_ks_frequency_data(data, "num_events_divided_by", cum_prob_or_hist, bin_edge, divisor_num=test_divisor)
 
-        assert not plot_dialog.dia.bin_size_spinbox.isEnabled()
-        assert plot_dialog.dia.bin_size_spinbox.text() == str(int(len(data) / test_divisor))
         assert np.isclose(self.plot_label(plot_dialog), bin_size, 1e-2)
         assert np.array_equal(y_values, plot_y)
         assert np.array_equal(x_values, plot_x)
 
         plot_dialog.close()
+        del dialog
+        del plot_dialog
+        del options_dialog
         tgui.shutdown()
+        
+        # Plots -
+        # is there a way to intergrate below to check all binning methods?
+        # do plot options already exist? if not, these can be checked manually. Are the configs shared!??! (yes) (so just need to check 'KS test' options - is this done already?
+    @pytest.mark.may_crash
+    @pytest.mark.parametrize("analysis_type", ["frequency", "amplitude", "rise_time", "decay_amplitude_percent", "event_time", "decay_tau", "biexp_rise", "biexp_decay"])
+    @pytest.mark.parametrize("cum_prob_or_hist", ["cum_prob", "hist"])
+    def test_cumulative_frequency_for_all_params(self, tgui, analysis_type, cum_prob_or_hist):
+        """
+        """
+        for filenum in range(1):
+
+            if "biexp" in analysis_type:
+                tgui.setup_artificial_data(norm_or_cumu_time="cumulative", analysis_type="events_multi_record_biexp_7500")
+            tgui.update_events_to_varying_amplitude_and_tau()
+
+            custom_binnum = int(tgui.adata.num_events() / 2)
+            tgui.mw.cfgs.events["frequency_data_options"]["plot_type"] = cum_prob_or_hist
+            tgui.mw.cfgs.events["frequency_data_options"]["binning_method"] = "custom_binnum"
+            tgui.mw.cfgs.events["frequency_data_options"]["custom_binnum"] = custom_binnum
+
+            if "biexp" in analysis_type:
+                tgui.set_widgets_for_artificial_event(tgui, run=True)
+            else:
+                tgui.run_artificial_events_analysis(tgui, "threshold")
+
+            tgui.switch_mw_tab(1)
+            tgui.set_frequency_data_table(tgui, analysis_type)
+
+            num_rows = tgui.adata.num_events() - tgui.adata.num_recs if analysis_type == "frequency" else tgui.adata.num_events()
+
+            frequency_data = tgui.get_frequency_data_from_qtable(analysis_type, 0, num_rows)  # remove 3 from the bottom - the summary statistics
+
+            flattened_params, flattened_labels = self.get_test_frequency_data(tgui, analysis_type)
+
+            self.check_summary_statistics(tgui, start_col=filenum * 4, test_data=flattened_params)
+
+            cum_probs, bin_edges = self.run_tests_all_frequency_data(tgui, analysis_type, frequency_data,
+                                                                     flattened_params, flattened_labels,
+                                                                     custom_binnum, cum_prob_or_hist)
+
+            self.run_tests_frequency_data_plot(tgui, bin_edges, cum_probs, analysis_type, cum_prob_or_hist)
+
+            tgui.mw.mw.actionBatch_Mode_ON.trigger()
+            tgui.setup_artificial_data("cumulative", analysis_type=tgui.analysis_type)
+        tgui.shutdown()
+
+    @pytest.mark.may_crash
+    def test_ks_test_not_enough_samples_1d(self, tgui):
+
+        QtCore.QTimer.singleShot(1000, lambda: self.check_not_enough_samples_1d(tgui))
+        self.setup_and_fill_ks_test_one_dataset(tgui,
+                                                user_data=np.atleast_2d([0, 1, 2]).T)
+
+    @pytest.mark.may_crash
+    @pytest.mark.parametrize("uneven_data", [[[0, 0, 0, 0], [0, 0, 0]],
+                                             [[0, 0, 0], [0, 0, 0, 0]],
+                                             [[0, 0, 0], [0, 0, 0]]])
+    def test_ks_test_not_enough_samples_2d(self, tgui, uneven_data):
+        """
+        """
+        dialog, data, table = self.setup_ks_test_widgets_and_data(tgui)
+
+        tgui.switch_groupbox(dialog.dia.two_datasets_groupbox, on=True)
+
+        for row, input in enumerate(uneven_data[0]):  # RENAME
+            table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(input)))
+
+        for row, input in enumerate(uneven_data[1]):
+            table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(input)))
+
+        QtCore.QTimer.singleShot(2000, lambda: self.check_not_enough_samples_2d(tgui))
+        tgui.left_mouse_click(dialog.dia.run_analysis_button)
+
+        del dialog
