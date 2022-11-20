@@ -6,9 +6,10 @@ sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
 sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), 'easy_electrophysiology'))
 from ..easy_electrophysiology import easy_electrophysiology
-from ephys_data_methods import core_analysis_methods
+from ephys_data_methods import core_analysis_methods, current_calc
 from utils import utils
 from generate_artificial_data import TestSingleSineWave
+import scipy
 
 class TestsKinetics:
 
@@ -243,3 +244,73 @@ class TestsKinetics:
         test_max_curve = np.argmax(second_deriv * (1 + (first_deriv**2))**(-3/2))
         max_curve = core_analysis_methods.calculate_threshold(first_deriv, second_deriv,  third_deriv, 0, 10000, cfgs)
         assert test_max_curve == max_curve
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------
+# Phase Plot Analysis Tests
+# ----------------------------------------------------------------------------------------------------------------------------------------------
+
+    @pytest.mark.parametrize("interpolate", [True, False])
+    @pytest.mark.parametrize("increase", [1, 2, 5, 10, 100])
+    def test_calculate_phase_plot_linear(self, interpolate, increase):
+        """
+        When the increase is constant, the vm, vm_diff plot should be a straight line. Check wth interpoalte also (matches perfectly, ==, without interpolation).
+        """
+        data = np.arange(0, 1000, increase)
+        ts = 1/1000  # i.e. 1 ms
+        x, x_diff = current_calc.calculate_phase_plot(data, ts, interpolate=interpolate)
+        slope, __, __, __, __ = scipy.stats.linregress(x, x_diff)
+
+        if not interpolate:
+            assert np.array_equal(x, data[:-1])
+        assert utils.allclose(x_diff, increase, 1e-10)
+        assert utils.allclose(slope, 0, 1e-10)
+
+    @pytest.mark.parametrize("interpolate", [True, False])
+    def test_calculate_phase_plot_exponential(self, interpolate):
+        """
+        For any expoential function on interger domain, the ratio increase is the base - 1.
+        e.g. (a^(n+1) - a^n) / a^n = a - 1
+        This is cool! and is used below
+        """
+        data = np.exp(np.arange(0, 100))
+        ts = 1/1000
+        x, x_diff = current_calc.calculate_phase_plot(data, ts, interpolate=interpolate)
+        slope, __, __, __, __ = scipy.stats.linregress(x, x_diff)
+
+        assert np.isclose(slope, np.e - 1, 1e-10)
+
+        # test ts by scaling by a half
+        ts = 1 / 500
+        x, x_diff = current_calc.calculate_phase_plot(data, ts, interpolate=interpolate)
+        slope, __, __, __, __ = scipy.stats.linregress(x, x_diff)
+
+        assert np.isclose(slope, (np.e - 1) / 2, 1e-10)
+
+    def test_phase_plot_params(self):
+        """
+        Manually generate an array with clear parameters to find. Check all parameter calculating functions.
+        """
+        #                               thr  vmax                min       last vmax (cut)
+        diffs = np.array([0, 10, 5, 49, 50,  55, -5,  -25,  0,  10,  -100, 65, 1000])
+        #         data       [0, 10, 15, 64, 114, 169, 164, 139, 139, 149,  49, 114]
+        data = np.cumsum(diffs)
+        
+        x, x_diff = current_calc.calculate_phase_plot(data, ts=1/1000, interpolate=False)
+
+        threshold = 49
+        test_threshold_x, test_threshold_x_diff = current_calc.calculate_threshold(x, x_diff, threshold)
+
+        assert test_threshold_x == 64
+        assert test_threshold_x_diff == 50
+
+        test_vmax_x, test_vmax_x_diff = current_calc.calculate_vmax(x, x_diff)  # the last vm is cut off because of diff(). Under normal circumstances, this will have no effect for AP analysis
+        assert test_vmax_x == 169
+        assert test_vmax_x_diff == -5
+
+        test_vm_diff_min_x, test_vm_diff_min_x_diff = current_calc.calculate_vm_diff_min(x, x_diff)
+        assert test_vm_diff_min_x == 149
+        assert test_vm_diff_min_x_diff == -100
+
+        test_vm_diff_max_x, test_vm_diff_max_x_diff = current_calc.calculate_vm_diff_max(x, x_diff)
+        assert test_vm_diff_max_x == 114
+        assert test_vm_diff_max_x_diff == 1000

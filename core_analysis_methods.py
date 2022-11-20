@@ -647,14 +647,16 @@ def calculate_max_slope_rise_or_decay(time_,
 
     return max_slope_ms, fit_time, fit_data
 
-def twohundred_kHz_interpolate(vm,
-                               time_):
+def twohundred_kHz_interpolate(vm,  # TODO: rename?
+                               time_,
+                               khz_interpolate=200000,
+                               interp_method="linear"):
     """
     Interpolate to 200 kHz with linear interpolation.
     """
     fs = calc_fs(time_)
-    interp_factor = 200000 / fs
-    vm = interpolate_data(vm, time_, "linear", interp_factor, 0)
+    interp_factor = khz_interpolate / fs
+    vm = interpolate_data(vm, time_, interp_method, interp_factor, 0)
     time_array = interpolate_data(time_, time_, "linear", interp_factor, 0)
 
     return vm, time_array
@@ -913,6 +915,7 @@ def cut_trace_length_time(time_method, time_array, new_start_sample, new_stop_sa
 def cut_trace_and_normalise_time(time_array, new_start_sample, new_stop_sample):
     """
     see cut_trace_length_time()
+    NOTE: this slicing is upper bound exclusive
     """
     norm_time_array = copy_and_normalise_time_array(time_array)
     norm_time_array = norm_time_array[:, new_start_sample:new_stop_sample]
@@ -1132,7 +1135,7 @@ def format_bin_edges(bin_edges, x_axis_display):
     return x_values
 
 def get_bin_centers(bin_edges):
-    return bin_edges[0:-1] + (np.diff(bin_edges) / 2)
+    return (bin_edges[:-1] + bin_edges[1:]) / 2
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Analysis
@@ -1357,3 +1360,12 @@ def total_num_events(event_info, return_per_rec=False):  # TODO: this method is 
     events_to_return = np.sum(per_rec) if not return_per_rec else per_rec
 
     return events_to_return
+
+def calculate_summary_statistics(data):
+    """
+    Calculate the mean, standard deviation and standard error for 1D data.
+    """
+    mean = np.mean(data)
+    stdev = np.std(data, ddof=1)
+    sterr = np.std(data, ddof=1) / np.sqrt(len(data))
+    return mean, stdev, sterr

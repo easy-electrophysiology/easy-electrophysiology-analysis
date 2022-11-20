@@ -14,6 +14,8 @@ from ..easy_electrophysiology import easy_electrophysiology
 MainWindow = easy_electrophysiology.MainWindow
 from setup_test_suite import GuiTestSetup
 
+SPEED = "slow"
+
 class TestLinearRegionsImSettings:
     """
     Test the linearregion boundaries (e.g. 'experimental' and 'baseline') for spikecounts ('spkcnt'), input resistance and spike kinetics (skinetics).
@@ -156,10 +158,10 @@ class TestLinearRegionsImSettings:
                                                                          region_type + '_upperbound',
                                                                          rec)
 
-        average_bounds = np.mean(vm_or_im_array[rec][start_sample:stop_sample])
+        average_bounds = np.mean(vm_or_im_array[rec][start_sample:stop_sample + 1])
         average_axline = bounds_obj.axlines[region_type].value() if '_bl_' in region_type else None
         test_average = np.mean(vm_or_im_array[rec][tgui.test_bl_lr_start_idx:
-                                                   tgui.test_bl_lr_stop_idx])
+                                                   tgui.test_bl_lr_stop_idx + 1])
 
         return average_bounds, average_axline, test_average
 
@@ -536,7 +538,7 @@ class TestLinearRegionsImSettings:
                                                                         tgui.mw.skinetics_bounds,
                                                                         mode)
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
-            tgui.load_file("current_clamp_cumu")
+            tgui.load_file("current_clamp_cumu", SPEED)
         tgui.shutdown()
 
     @pytest.mark.parametrize("mode", ["dont_align_across_recs", "align_across_recs"])
@@ -558,7 +560,7 @@ class TestLinearRegionsImSettings:
                 tgui.left_mouse_click(tgui.mw.mw.curve_fitting_scroll_region_right_button)
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
-            tgui.load_file("current_clamp_cumu")
+            tgui.load_file("current_clamp_cumu", SPEED)
         tgui.shutdown()
 
     @pytest.mark.parametrize("mode", ["link_im_vm_ON_and_link_recs_ON",  "link_im_vm_OFF_and_link_recs_ON",
@@ -634,7 +636,7 @@ class TestLinearRegionsImSettings:
                     assert bounds.analysis_cfg[linked_bound + "_upperbound"] == saved_cfg[linked_bound + "_upperbound"]
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
-            tgui.load_file("current_clamp_cumu")
+            tgui.load_file("current_clamp_cumu", SPEED)
         tgui.shutdown()
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------

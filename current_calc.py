@@ -16,8 +16,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import numpy as np
 from utils import utils
-import scipy.sparse
+import scipy
 from ephys_data_methods import core_analysis_methods
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Spike Counting Methods - Automatically Detect Spikes
@@ -76,6 +77,7 @@ def auto_find_spikes(data,
 
     return spike_info
 
+
 # Auto - thresholding
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -105,10 +107,10 @@ def spikes_from_auto_threshold_per_record(data,
 
         rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
         time_bound_start_sample, \
-            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
-                                                                     bound_start_or_stop,
-                                                                     data,
-                                                                     rec)
+        time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                 bound_start_or_stop,
+                                                                 data,
+                                                                 rec)
         candidate_spikes_idx = find_candidate_spikes(vm_diff, thr,
                                                      time_bound_start_sample, time_bound_stop_sample)
 
@@ -135,6 +137,7 @@ def spikes_from_auto_threshold_per_record(data,
 
     return spike_info
 
+
 def spikes_from_auto_threshold_per_spike(data,
                                          rec_from,
                                          upper_inclusive_rec_bound,
@@ -155,10 +158,10 @@ def spikes_from_auto_threshold_per_spike(data,
 
         rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
         time_bound_start_sample, \
-            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
-                                                                     bound_start_or_stop,
-                                                                     data,
-                                                                     rec)
+        time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                 bound_start_or_stop,
+                                                                 data,
+                                                                 rec)
         candidate_spikes_idx = find_candidate_spikes(vm_diff, thr,
                                                      time_bound_start_sample, time_bound_stop_sample)
         if candidate_spikes_idx.any():
@@ -166,15 +169,20 @@ def spikes_from_auto_threshold_per_spike(data,
                                                                                                                  candidate_spikes_idx,
                                                                                                                  thr,
                                                                                                                  rec_time_array=data.time_array[rec])
-            for peak_vm, peak_time, peak_sample in zip(peak_vms,
-                                                       peak_times,
-                                                       peak_idxs):
-                dict_key = str(peak_time)
-                spike_info[rec][dict_key] = [peak_vm, peak_sample]
+
+            if peak_vms.any():
+                for peak_vm, peak_time, peak_sample in zip(peak_vms,
+                                                           peak_times,
+                                                           peak_idxs):
+                    dict_key = str(peak_time)
+                    spike_info[rec][dict_key] = [peak_vm, peak_sample]
+            else:
+                spike_info[rec] = 0
         else:
             spike_info[rec] = 0
 
     return spike_info
+
 
 # Search for within-threshold spikes
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -210,6 +218,7 @@ def find_candidate_spikes(vm_diff,
     candidate_spikes_idx = n_samples_above[idx]
 
     return candidate_spikes_idx
+
 
 def clean_and_amplitude_thr_candidate_spikes_and_extract_paramters(vm,
                                                                    candidate_spikes_idx,
@@ -248,6 +257,7 @@ def clean_and_amplitude_thr_candidate_spikes_and_extract_paramters(vm,
 
     return peak_vms, thr_vms, peak_idxs, peak_times
 
+
 # Find Spikes Above Set Threshold
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -283,17 +293,16 @@ def find_spikes_above_record_threshold(data,
     bound_vm_array = [[] for __ in range(data.num_recs)]
     bound_time_array = [[] for __ in range(data.num_recs)]
     for rec in range(data.num_recs):
-
         rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
         time_bound_start_sample, \
-            time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
-                                                                     bound_start_or_stop,
-                                                                     data,
-                                                                     rec)
+        time_bound_stop_sample = get_bound_times_in_sample_units(rec_time_bounds,
+                                                                 bound_start_or_stop,
+                                                                 data,
+                                                                 rec)
         all_time_bound_start_sample[rec] = time_bound_start_sample
         all_time_bound_stop_sample[rec] = time_bound_stop_sample
-        bound_vm_array[rec] = data.vm_array[rec, time_bound_start_sample:time_bound_stop_sample]
-        bound_time_array[rec] = data.time_array[rec, time_bound_start_sample:time_bound_stop_sample]
+        bound_vm_array[rec] = data.vm_array[rec, time_bound_start_sample:time_bound_stop_sample + 1]
+        bound_time_array[rec] = data.time_array[rec, time_bound_start_sample:time_bound_stop_sample + 1]
 
     # Count Spikes
     # get vector of vm indices above threshold (with length either 1 when threshold
@@ -303,7 +312,6 @@ def find_spikes_above_record_threshold(data,
 
     above_threshold_vm_matrix = [[] for __ in range(data.num_recs)]
     for rec in range(rec_from, upper_inclusive_rec_bound):
-
         above_threshold_vm_matrix[rec] = np.ma.masked_array(bound_vm_array[rec],
                                                             np.invert(bound_vm_array[rec] > threshold[rec]),
                                                             fill_value=np.nan).filled()
@@ -312,7 +320,7 @@ def find_spikes_above_record_threshold(data,
     for rec in range(rec_from, upper_inclusive_rec_bound):
 
         cum_ap_index = index_out_continuous_above_threshold_samples(
-                                                                   above_threshold_vm_matrix[rec])
+            above_threshold_vm_matrix[rec])
 
         # get indexed vm and time of > thr vm
         peaks_idx = get_peaks_idx_from_cum_idx(cum_ap_index,
@@ -332,6 +340,7 @@ def find_spikes_above_record_threshold(data,
             spike_info[rec] = 0
 
     return spike_info
+
 
 def index_out_continuous_above_threshold_samples(binary_ts, smooth=False):
     """
@@ -366,6 +375,7 @@ def index_out_continuous_above_threshold_samples(binary_ts, smooth=False):
 
     return cum_index
 
+
 def get_peaks_idx_from_cum_idx(cum_event_index, data_vector, event_dir):
     """
     from a 1 x n array of indices corresponding to contiguous events (e.g. [ 0 0 1 1 1 0 0 2 2 2 ]
@@ -390,15 +400,17 @@ def get_peaks_idx_from_cum_idx(cum_event_index, data_vector, event_dir):
 
     return peaks_idx
 
+
 def fast_indexer(array):
     """
     Use spare matrix for indexing an array of mostly zeros for speed.
     """
     col_num = np.arange(array.size)
     return scipy.sparse.csr_matrix((col_num,
-                                   (array.ravel(), col_num)),
+                                    (array.ravel(), col_num)),
                                    shape=(array.max() + 1,
                                           array.size))
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Spike Parameter Methods
@@ -452,6 +464,7 @@ def get_first_spike_latency(spike_info,
 
     return fs_latency
 
+
 def calculate_isi_measures(spike_info,
                            analysis_type):
     """
@@ -493,6 +506,7 @@ def calculate_isi_measures(spike_info,
 
     return analysed_data
 
+
 def calculate_sfa_local_variance_method(spike_times):
     """
     Local variance method from
@@ -511,10 +525,11 @@ def calculate_sfa_local_variance_method(spike_times):
     n_minus_1 = len(isi_cut)
 
     local_variance = np.sum(
-                            (3*(isi_cut - isi_shift_1_idx)**2) / (isi_cut + isi_shift_1_idx)**2
-                            ) / n_minus_1
+        (3 * (isi_cut - isi_shift_1_idx) ** 2) / (isi_cut + isi_shift_1_idx) ** 2
+    ) / n_minus_1
 
     return local_variance
+
 
 def calculate_rheobase(spike_info,
                        single_im_per_rec_values,
@@ -551,23 +566,23 @@ def calculate_rheobase(spike_info,
 
     return rheobase_rec, rheobase
 
+
 def update_rheobase_after_im_round(round_or_not_round, analysis_df):
     """
     """
-    if np.any(analysis_df.loc[:, "rheobase"]) and \
-            "record" == analysis_df.loc[2, "rheobase"] and \
+    if np.any(analysis_df.loc[0, "rheobase"]) and \
+            "record" == analysis_df.loc[0, "rheobase_method"] and \
             not np.any(analysis_df.loc[:, "user_input_im"]):
 
-        rheobase_rec = analysis_df.loc[0, "rheobase"]
+        rheobase_rec = analysis_df.loc[0, "rheobase_rec"]
         if round_or_not_round == "round":
-            try:
-                analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta_round"]
-            except:
-                breakpoint()
+            analysis_df.loc[0, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta_round"]
+
         elif round_or_not_round == "not_round":
-            analysis_df.loc[1, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta"]
+            analysis_df.loc[0, "rheobase"] = analysis_df.loc[rheobase_rec, "im_delta"]
 
     return analysis_df
+
 
 def round_im_injection_to_user_stepsize(input_im,
                                         step_size,
@@ -628,6 +643,7 @@ def round_im_injection_to_user_stepsize(input_im,
 
     return rounded_im_inj_np
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Input Resistance / Im Calculation Methods
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -652,7 +668,7 @@ def calculate_input_resistance(im_in_pa,
     if im_in_na.size == 1:
         input_resistance = vm_in_mv / im_in_na
         intercept = None
-        
+
     else:
         im_in_na = np.atleast_1d(im_in_na)
 
@@ -660,6 +676,7 @@ def calculate_input_resistance(im_in_pa,
                                                                          vm_in_mv)
 
     return input_resistance, intercept
+
 
 def calculate_sag_ratio(sag_hump,
                         peak_deflections):
@@ -675,6 +692,7 @@ def calculate_sag_ratio(sag_hump,
     """
     sag_ratio = (sag_hump / peak_deflections)
     return sag_ratio
+
 
 def calculate_baseline_minus_inj(data,
                                  time_array,
@@ -711,7 +729,6 @@ def calculate_baseline_minus_inj(data,
         bounds_sample = []
         for bound, start_or_stop in zip(bounds,
                                         bounds_start_or_stop):
-
             processed_bound = check_bounds_are_in_rec_or_single_form(bound,
                                                                      rec)
 
@@ -723,12 +740,13 @@ def calculate_baseline_minus_inj(data,
                                         rec,
                                         add_offset_back=True))
 
-        baselines[rec] = np.mean(data[rec][bounds_sample[0]:bounds_sample[1]])
-        steady_states[rec] = np.mean(data[rec][bounds_sample[2]:bounds_sample[3]])
+        baselines[rec] = np.mean(data[rec][bounds_sample[0]:bounds_sample[1] + 1])
+        steady_states[rec] = np.mean(data[rec][bounds_sample[2]:bounds_sample[3] + 1])
         avg_over_period[rec] = steady_states[rec] - baselines[rec]
         counted_recs[rec] = rec + 1
 
     return counted_recs, avg_over_period, baselines, steady_states
+
 
 def check_bounds_are_in_rec_or_single_form(bound, rec):
     """
@@ -740,6 +758,7 @@ def check_bounds_are_in_rec_or_single_form(bound, rec):
         return bound[rec]
     else:
         return bound
+
 
 def find_negative_peak(vm,
                        time_array,
@@ -782,15 +801,15 @@ def find_negative_peak(vm,
 
         if peak_direction == "follow_im":
             if avg_over_vm[rec] > 0:
-                peak_idx = np.argmax(vm[rec][start_sample:stop_sample])
+                peak_idx = np.argmax(vm[rec][start_sample:stop_sample + 1])
             else:
-                peak_idx = np.argmin(vm[rec][start_sample:stop_sample])
+                peak_idx = np.argmin(vm[rec][start_sample:stop_sample + 1])
 
         elif peak_direction == "min":
-            peak_idx = np.argmin(vm[rec][start_sample:stop_sample])
+            peak_idx = np.argmin(vm[rec][start_sample:stop_sample + 1] + 1)
 
         elif peak_direction == "max":
-            peak_idx = np.argmax(vm[rec][start_sample:stop_sample])
+            peak_idx = np.argmax(vm[rec][start_sample:stop_sample + 1])
 
         peak_idx = start_sample + peak_idx
         peak_time = time_array[rec][peak_idx]
@@ -801,6 +820,7 @@ def find_negative_peak(vm,
         peak_deflections[rec] = peak_vm - vm_baselines[rec]
 
     return peaks, sag_humps, peak_deflections
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Spike Kinetic Methods
@@ -880,13 +900,13 @@ def analyse_spike_kinetics(cfgs,
 
     # AHP
     fahp_time, fahp_vm, fahp_idx, fahp = core_analysis_methods.calculate_ahp(data,
-                                                                             cfgs.skinetics["fahp_start"]*1000,
-                                                                             fahp_stop_time*1000,
-                                                                             vm,  time_,  peak_idx, thr_vm)
+                                                                             cfgs.skinetics["fahp_start"] * 1000,
+                                                                             fahp_stop_time * 1000,
+                                                                             vm, time_, peak_idx, thr_vm)
 
     mahp_time, mahp_vm, mahp_idx, mahp = core_analysis_methods.calculate_ahp(data,
-                                                                             cfgs.skinetics["mahp_start"]*1000,
-                                                                             mahp_stop_time*1000,
+                                                                             cfgs.skinetics["mahp_start"] * 1000,
+                                                                             mahp_stop_time * 1000,
                                                                              vm, time_, peak_idx, thr_vm)
 
     # Rise, decay and fwhm
@@ -917,22 +937,22 @@ def analyse_spike_kinetics(cfgs,
 
     half_amp = thr_vm + (amplitude / 2)
     rise_mid_time, rise_mid_vm, decay_mid_time, decay_mid_vm, \
-        fwhm, __, __ = core_analysis_methods.calculate_fwhm(thr_to_peak_time,
-                                                            thr_to_peak_vm,
-                                                            peak_to_end_time,
-                                                            peak_to_end_vm,
-                                                            half_amp,
-                                                            interp=cfgs.skinetics["interp_200khz"])
+    fwhm, __, __ = core_analysis_methods.calculate_fwhm(thr_to_peak_time,
+                                                        thr_to_peak_vm,
+                                                        peak_to_end_time,
+                                                        peak_to_end_vm,
+                                                        half_amp,
+                                                        interp=cfgs.skinetics["interp_200khz"])
 
     rise_max_slope_ms, rise_max_slope_fit_time, rise_max_slope_fit_data, \
-        decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data = run_skinetics_max_slope(thr_to_peak_time, thr_to_peak_vm,
-                                                                                                         peak_to_end_time, peak_to_end_vm,
-                                                                                                         data, cfgs)
+    decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data = run_skinetics_max_slope(thr_to_peak_time, thr_to_peak_vm,
+                                                                                                     peak_to_end_time, peak_to_end_vm,
+                                                                                                     data, cfgs)
     # Save Outputs
     output = cfgs.skinetics_params()
-    output["thr"] = {"time": thr_time, "vm": thr_vm}
-    output["peak"] = {"time": peak_time, "vm": peak_vm}
-    output["fahp"] = {"time": fahp_time, "vm": fahp_vm, "value": fahp}
+    output["thr"] = {"time": thr_time, "vm": thr_vm, "thr_idx": thr_idx}  # TODO: add to params!!
+    output["peak"] = {"time": peak_time, "vm": peak_vm, "peak_idx": peak_idx}
+    output["fahp"] = {"time": fahp_time, "vm": fahp_vm, "value": fahp, "fahp_idx": fahp_idx}
     output["mahp"] = {"time": mahp_time, "vm": mahp_vm, "value": mahp}
     output["fwhm"] = {"rise_mid_time": rise_mid_time, "rise_mid_vm": rise_mid_vm, "decay_mid_time": decay_mid_time,
                       "decay_mid_vm": decay_mid_vm, "fwhm_ms": fwhm * 1000}
@@ -947,6 +967,7 @@ def analyse_spike_kinetics(cfgs,
 
     return output
 
+
 def get_ahp_times(cfgs, peak_time, time_):
     """
     If any of the user-set time paranters extend past the trace end, set them to the trace endpoints
@@ -955,6 +976,7 @@ def get_ahp_times(cfgs, peak_time, time_):
     mahp_stop_time = adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, "mahp")
 
     return fahp_stop_time, mahp_stop_time
+
 
 def adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, ahp_key):
     """
@@ -969,6 +991,7 @@ def adjust_ahp_time_for_end_of_trace(cfgs, peak_time, time_, ahp_key):
             ahp_stop_time = False
 
     return ahp_stop_time
+
 
 def run_skinetics_max_slope(thr_to_peak_time,
                             thr_to_peak_vm,
@@ -1005,7 +1028,8 @@ def run_skinetics_max_slope(thr_to_peak_time,
         decay_max_slope_fit_data = [np.nan]
 
     return rise_max_slope_ms, rise_max_slope_fit_time, rise_max_slope_fit_data, \
-        decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data
+           decay_max_slope_ms, decay_max_slope_fit_time, decay_max_slope_fit_data
+
 
 def calculate_peak_to_end(vm,
                           time_,
@@ -1029,6 +1053,74 @@ def calculate_peak_to_end(vm,
 
     return peak_to_end_vm, peak_to_end_time
 
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# Phase Plot Analysis
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+def calculate_phase_plot(data, ts, interpolate):
+    """
+    Calculate the phase plot of the data (usually Vm values of action potential).
+    The phase plot is Vm diff (delta Vm / ms) plot against Vm.
+
+    Options for cublic spline interpolation also provided. Interpolation factor of 100
+    chosen during testing, providing high degree of smoothing without major impact on performance.
+
+    INPUTS:
+        data - 1D vector of data values (typically Vm values of an action potential)
+        ts - time step used to calculate dVm / ms
+        interpolate - bool for cubic spline interpolation of the data
+    """
+    vm_diff = np.diff(data) / (ts * 1000)
+    vm = data[0:-1]
+
+    if interpolate:
+        interp_factor = 100
+        time_ = np.arange(0, len(vm))
+        vm_diff = core_analysis_methods.interpolate_data(vm_diff, time_, "cubic", interp_factor, 0)
+        vm = core_analysis_methods.interpolate_data(vm, time_, "cubic", interp_factor, 0)
+
+    return vm, vm_diff
+
+
+def calculate_threshold(vm, vm_diff, threshold_cutoff):
+    """
+    Find the first dVm/ms datapoint over the given threshold (default 10). Gives the value in
+    Vm and Vm derivative for plotting on phase-space plots.
+
+    see calculate_phase_plot() for inputs.
+    """
+    above_threshold = np.where(vm_diff > threshold_cutoff)[0]
+    if above_threshold.size == 0:
+        return np.nan, np.nan
+
+    idx = np.min(above_threshold)
+    return vm[idx], vm_diff[idx]
+
+
+def calculate_vmax(vm, vm_diff):
+    """
+    Find maximum Vm (see calculate_threshold() for details)
+    """
+    idx = np.argmax(vm)
+    return vm[idx], vm_diff[idx]
+
+
+def calculate_vm_diff_max(vm, vm_diff):
+    """
+    Find maximum first derivative (see calculate_threshold() for details)
+    """
+    idx = np.argmax(vm_diff)
+    return vm[idx], vm_diff[idx]
+
+
+def calculate_vm_diff_min(vm, vm_diff):
+    """
+    Find minimum first derivative (see calculate_threshold() for details)
+    """
+    idx = np.argmin(vm_diff)
+    return vm[idx], vm_diff[idx]
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Time Indexing Methods and Utils
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1047,6 +1139,7 @@ def check_num_rec_samples(data,
             if len(data[rec]) != len(data[rec - 1]):
                 return False
     return True
+
 
 def get_bound_times_in_sample_units(time_bounds,
                                     start_or_stop,
@@ -1068,6 +1161,7 @@ def get_bound_times_in_sample_units(time_bounds,
         time_bound_stop_sample = len(data.vm_array[0])
 
     return time_bound_start_sample, time_bound_stop_sample
+
 
 def convert_time_to_samples(timepoint,
                             start_or_stop,

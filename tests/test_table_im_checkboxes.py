@@ -21,6 +21,8 @@ keyClick = QTest.keyClick
 from setup_test_suite import GuiTestSetup
 from PySide2.QtCore import Signal
 
+SPEED = "slow"
+
 class TestTableCheckboxes:
     """
     Check the correct table checkboxes are enabled / checked depending on the spikecount analysis that was
@@ -31,6 +33,7 @@ class TestTableCheckboxes:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data(request.param)  # UPDATE GEENRATOR TO USE A DICT
         tgui.raise_mw_and_give_focus()
         yield tgui

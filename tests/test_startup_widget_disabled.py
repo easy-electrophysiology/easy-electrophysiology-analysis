@@ -90,8 +90,7 @@ class TestConfigs:
         """
         self.check_all_startup_widgets(tgui, False)
 
-        tgui.test_update_fileinfo()
-        tgui.setup_artificial_data('normalised')
+        self.quick_setup_file(tgui)
 
         self.check_all_startup_widgets(tgui, True)
 
@@ -103,8 +102,7 @@ class TestConfigs:
         assert not tgui.mw.mw.ir_im_opts_combobox.isEnabled()
         assert not tgui.mw.mw.fake_im_round_combobox.isEnabled()
 
-        tgui.test_update_fileinfo()
-        tgui.setup_artificial_data('normalised')
+        self.quick_setup_file(tgui)
 
         assert not tgui.mw.mw.spkcnt_im_opts_combobox.isEnabled()
 
@@ -120,25 +118,40 @@ class TestConfigs:
         assert not tgui.mw.mw.fake_im_round_combobox.isEnabled()
         assert tgui.mw.mw.ir_im_opts_combobox.isEnabled()
 
+    def quick_setup_file(self, tgui):
+        tgui.test_update_fileinfo()
+        tgui.speed = "fast"  # this has no effect here
+        tgui.setup_artificial_data('normalised')
+
+    @pytest.mark.parametrize("load_or_save", ["load", "save"])
     @pytest.mark.parametrize("analysis_type", ["events_template_matching", "events_thresholding"])
-    def test_load_save_events_only_enabled_on_events(self, tgui, analysis_type):
+    def test_load_save_events_only_enabled_on_events(self, tgui, analysis_type, load_or_save):
         """
-        Check Save Events menu is only disabled when file is loaded and events analysis selected
+        Updated since load / save events is always shown but popup informs when it doesn't open.
+
+        Only test when it shouldnt be shown - check messagebox is shown.
         """
-        assert not tgui.mw.mw.actionSave_Events_Analysis.isEnabled()
-        assert not tgui.mw.mw.actionLoad_Events_Analysis.isEnabled()
+        action = tgui.mw.mw.actionLoad_Events_Analysis if load_or_save == "load" else tgui.mw.mw.actionSave_Events_Analysis
+
+        assert not action.isEnabled()
+
+        tgui.load_a_filetype("current_clamp")
+
+        assert not action.isEnabled()
 
         tgui.load_a_filetype("voltage_clamp_1_record")
 
-        assert not tgui.mw.mw.actionSave_Events_Analysis.isEnabled()
-        assert not tgui.mw.mw.actionLoad_Events_Analysis.isEnabled()
+        assert action.isEnabled()
 
-        tgui.set_analysis_type(analysis_type)
-
-        assert tgui.mw.mw.actionSave_Events_Analysis.isEnabled()
-        assert tgui.mw.mw.actionLoad_Events_Analysis.isEnabled()
+        QtCore.QTimer.singleShot(1000, lambda: self.check_cannot_load_save_events_messagebox_is_shown(tgui))
+        action.trigger()
 
         tgui.set_analysis_type("curve_fitting")
 
-        assert not tgui.mw.mw.actionSave_Events_Analysis.isEnabled()
-        assert not tgui.mw.mw.actionLoad_Events_Analysis.isEnabled()
+        QtCore.QTimer.singleShot(1000, lambda: self.check_cannot_load_save_events_messagebox_is_shown(tgui))
+        action.trigger()
+
+    def check_cannot_load_save_events_messagebox_is_shown(self, tgui):
+
+        assert tgui.mw.messagebox.text() == "<p align='center'>Can only Load / Save Events when Events - Template or Events - Thresholding analysis is selected</p>"
+        tgui.mw.messagebox.close()

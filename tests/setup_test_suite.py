@@ -11,6 +11,7 @@ import keyboard
 import copy
 import logging
 import scipy.stats
+from slow_vs_fast_settings import get_settings
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
 sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), "easy_electrophysiology"))
@@ -22,6 +23,8 @@ except:
 
 from ephys_data_methods import current_calc, core_analysis_methods
 from generate_artificial_data import TestArtificialSkCntData, TestArtificialRiData, TestDataTools, TestArtificialEventData, ArtificialCurveFitting, TestArtificialsKinetics
+from model import VoltageClampDataModel
+from model import CurrentClampModel
 from utils import utils
 import utils_for_testing as test_utils
 from sys import platform
@@ -31,6 +34,13 @@ keyClick = QTest.keyClick
 keyClicks = QTest.keyClicks
 import string
 import random
+import gc
+
+def get_test_base_dir():
+    if platform == "darwin":
+        return "/Users/easyelectrophysiology/git-repos/easy_electrophysiology/tests/test_data/importdata_tests"
+    else:
+        return "C:/fMRIData/git-repo/easy_electrophysiology/tests/test_data/importdata_tests"
 
 class GuiTestSetup:
     def __init__(self, test_filetype):
@@ -39,10 +49,7 @@ class GuiTestSetup:
         TODO: quite large, can split into functions for interacting with GUI and functions to setup articifial data. Also,
         offloading some of this functionality to the new and improved pytest-qt would be worthwhile.
         """
-        if platform == "darwin":
-            self.test_base_dir = "/Users/easyelectrophysiology/git-repos/easy_electrophysiology/tests/test_data/importdata_tests"
-        else:
-            self.test_base_dir = "C:/fMRIData/git-repo/easy_electrophysiology/tests/test_data/importdata_tests"
+        self.test_base_dir = get_test_base_dir()
 
         self.mw = None
         self.num_recs = None
@@ -50,6 +57,7 @@ class GuiTestSetup:
         self.rec_to_value = 50
         self.test_filetype = test_filetype
         self.fake_filename = None
+        self.speed = None  # overwritten in test fixture
 
         if test_filetype == "cc_two_channel_abf":
             self.file_ext = ".abf"
@@ -69,7 +77,7 @@ class GuiTestSetup:
         elif test_filetype == "artificial_events_one_record":
             self.file_ext = ".abf"
             self.norm_time_data_path = os.path.join(self.test_base_dir, "vc_events_one_record.abf")
-        elif test_filetype in ["artificial_events_multi_record", "artificial_events_multi_record_norm"]:
+        elif test_filetype in ["artificial_events_multi_record", "artificial_events_multi_record_norm", "events_multi_record_table"]:
             self.file_ext = ".abf"
             self.norm_time_data_path = os.path.join(self.test_base_dir, "light_events_per_rec.abf")
         elif test_filetype == "with_time_offset":
@@ -102,6 +110,8 @@ class GuiTestSetup:
         harmless but makes a huge mess of the test results. As such stop all logging and exceptions
         during tear down.
         """
+        gc.collect()  # forcing clearup for python variables releasing c++ memory
+                      # is critical
         logger = logging.getLogger("my-logger")
         logger.propagate = False
         try:
@@ -148,52 +158,132 @@ class GuiTestSetup:
     def setup_artificial_data(self, norm_or_cumu_time, analysis_type="spkcnt", negative_events=True):
         """
         """
-        if analysis_type == "spkcnt":
-            self.adata = TestArtificialSkCntData()
+        if analysis_type in ["spkcnt", "skinetics_table"]:
+            settings = get_settings(self.speed,
+                                    analysis_type)
+            self.adata = TestArtificialSkCntData(num_recs=settings["num_recs"],
+                                                 max_num_spikes=settings["max_num_spikes"],
+                                                 min_spikes=settings["min_num_spikes"],
+                                                 )
+        elif analysis_type == "spkcnt_1_rec":
+            self.adata = TestArtificialSkCntData(num_recs=1, max_num_spikes=50, min_spikes=15)
         elif analysis_type == "Ri":
-            self.adata = TestArtificialRiData()
+            self.adata = TestArtificialRiData(num_recs=get_settings(self.speed,
+                                                                    analysis_type)["num_recs"])
         elif analysis_type == "skinetics":
-            self.adata = TestArtificialsKinetics()
+            settings = get_settings(self.speed,
+                                    analysis_type)
+            self.adata = TestArtificialsKinetics(num_recs=settings["num_recs"],
+                                                 max_num_spikes=settings["max_num_spikes"],
+                                                 min_spikes=settings["min_spikes"],
+                                                 num_samples=settings["num_samples"],
+                                                 time_stop=settings["time_stop"],
+                                                 )
         elif analysis_type == "data_tools":
-            self.adata = TestDataTools()
+            self.adata = TestDataTools(num_recs=get_settings(self.speed,
+                                                             analysis_type)["num_recs"])
+
         elif analysis_type == "events_one_record":
-            self.adata = TestArtificialEventData(num_recs=1, num_samples=1200000, time_stop=120, negative_events=negative_events)
-        elif analysis_type in ["events_multi_record", "events_multi_record_norm"]:
+            settings = get_settings(self.speed,
+                                    analysis_type)
+            self.adata = TestArtificialEventData(num_recs=settings["num_recs"], num_samples=settings["num_samples"], time_stop=settings["time_stop"],
+                                                 min_num_spikes=settings["min_num_spikes"], max_num_spikes=settings["max_num_spikes"],
+                                                 negative_events=negative_events
+                                                 )
+        elif analysis_type in ["events_multi_record", "events_multi_record_norm", "events_multi_record_table"]:
             self.mw.cfgs.file_load_options["select_channels_to_load"]["on"] = True  # the initial file only has 1 channel
             self.mw.cfgs.file_load_options["select_channels_to_load"]["channel_1_idx"] = 0
             self.mw.cfgs.file_load_options["select_channels_to_load"]["channel_2_idx"] = None
-            self.adata = TestArtificialEventData(num_recs=14, num_samples=800000, time_stop=15, negative_events=negative_events)
+            settings = get_settings(self.speed,
+                                    analysis_type)
+            self.adata = TestArtificialEventData(num_recs=settings["num_recs"], num_samples=settings["num_samples"], time_stop=settings["time_stop"],
+                                                 min_num_spikes=settings["min_num_spikes"], max_num_spikes=settings["max_num_spikes"],
+                                                 negative_events=negative_events
+                                                 )
         elif "events_multi_record_biexp" in analysis_type:
             self.mw.cfgs.file_load_options["select_channels_to_load"]["on"] = True  # the initial file only has 1 channel DRY ABOVE FIX
             self.mw.cfgs.file_load_options["select_channels_to_load"]["channel_1_idx"] = 0
             self.mw.cfgs.file_load_options["select_channels_to_load"]["channel_2_idx"] = None
+            settings = get_settings(self.speed,
+                                    analysis_type)
             if analysis_type == "events_multi_record_biexp_7500":
-                self.adata = TestArtificialEventData(num_recs=14, num_samples=1200000, time_stop=15, event_type="biexp", event_samples=7500)  # need higher sampling to get correct rise on the biexp
+                self.adata = TestArtificialEventData(num_recs=settings["num_recs"], num_samples=settings["num_samples"], time_stop=settings["time_stop"], event_type="biexp", event_samples=7500,
+                                                     min_num_spikes=settings["min_num_spikes"], max_num_spikes=settings["max_num_spikes"])  # need higher sampling to get correct rise on the biexp
             else:
-                self.adata = TestArtificialEventData(num_recs=14, num_samples=1200000, time_stop=15, event_type="biexp")  # need higher sampling to get correct rise on the biexp
+                self.adata = TestArtificialEventData(num_recs=settings["num_recs"], num_samples=settings["num_samples"], time_stop=settings["time_stop"], event_type="biexp",
+                                                     min_num_spikes=settings["min_num_spikes"], max_num_spikes=settings["max_num_spikes"], event_samples=2500)
         elif analysis_type == "curve_fitting":
             self.adata = ArtificialCurveFitting()
 
         self.load_artificial_file_from_adata(norm_or_cumu_time, analysis_type)
 
+    def make_fake_raw_data_from_artificial_data(self, analysis_type, time_array):
+
+        class RawData:
+            def __init__(self):
+                pass
+
+        raw_data = RawData()
+        raw_data.load_setting = None
+        raw_data.num_recs = self.adata.num_recs
+        raw_data.num_samples = self.adata.num_samples
+        raw_data.fs = self.adata.fs
+        raw_data.ts = self.adata.ts
+        raw_data.time_units = "s"
+        raw_data.vm_array = self.adata.vm_array
+        raw_data.im_array = self.adata.im_array
+        raw_data.time_array = time_array # self.adata.time_array
+        raw_data.num_data_channels = 2
+        raw_data.time_offset = False
+        raw_data.vm_units = "mV"
+        raw_data.im_units = "pA"
+        raw_data.t_start = self.adata.time_start
+        raw_data.t_stop = self.adata.time_array[-1][-1]
+        raw_data.channel_1_type = "Vm"
+        raw_data.channel_2_type = "Im"
+       # raw_data.channel_1_idx = 0
+       # raw_data.channel_2_idx = 1
+
+        if analysis_type in ["spkcnt", "spkcnt_1_rec", "Ri", "skinetics", "data_tools", "skinetics_table"]:
+            raw_data.recording_type = "current_clamp"
+        else:
+            raw_data.recording_type = "voltage_clamp_1_record"  if self.adata.num_recs == 0 else "voltage_clamp_multi_record"
+        raw_data.tags = ""
+        # raw_data.all_channels = reader.header["signal_channels"]
+
+        return raw_data
+
+
     def load_artificial_file_from_adata(self, norm_or_cumu_time, analysis_type):
-        self.mw.load_file(self.norm_time_data_path)
+
+        self.adata.time_type = norm_or_cumu_time
 
         if norm_or_cumu_time == "normalised":
-            self.mw.loaded_file.raw_data.time_array = self.adata.norm_time_array
+            time_array = self.adata.norm_time_array
             self.adata.min_max_time = self.adata.norm_min_max_time
             self.adata.time_array = self.adata.norm_time_array
             self.time_type = "normalised"
             if analysis_type in ["spkcnt", "skinetics", "events_multi_record_norm"]:
                 self.adata.peak_times_ = self.adata.peak_times["normalised"]
         elif norm_or_cumu_time == "cumulative":
-            self.mw.loaded_file.raw_data.time_array = self.adata.cum_time_array
+            time_array = self.adata.cum_time_array
             self.adata.min_max_time = self.adata.cum_min_max_time
             self.adata.time_array = self.adata.cum_time_array
             self.time_type = "cumulative"
-            if analysis_type in ["spkcnt", "skinetics", "events_one_record", "events_multi_record"]:
+            if analysis_type in ["spkcnt", "skinetics", "events_one_record", "events_multi_record", "events_multi_record_table", "skinetics_table"]:
                 self.adata.peak_times_ = self.adata.peak_times["cumulative"]
 
+        raw_data = self.make_fake_raw_data_from_artificial_data(analysis_type, time_array)
+        if raw_data.recording_type == "current_clamp":
+            self.mw.loaded_file = CurrentClampModel.CurrentClampDataModel("", self.mw, self.mw.cfgs, raw_data, False)
+            self.mw.connect_current_clamp_plots()
+        else:
+            self.mw.loaded_file = VoltageClampDataModel.VoltageClampDataModel("", self.mw.cfgs, raw_data, False, self.mw)
+        self.mw.loaded_file.fileinfo = {
+            "full_filepath": "",
+            "file_ext": "",
+            "filename": "fake_data_name",
+        }
         # reset and make mw have fkae data
         self.time_type = norm_or_cumu_time
         self.analysis_type = analysis_type
@@ -205,12 +295,13 @@ class GuiTestSetup:
         self.mw.loaded_file.init_analysis_results_tables()
         self.mw.clear_and_reset_widgets_for_new_file()
 
-    def load_file(self, filetype):
+    def load_file(self, filetype, SPEED):
         """
         Quick convenience function to load a file
         """
         if filetype is None:
             self.test_update_fileinfo()
+            self.speed = SPEED
             self.setup_artificial_data("normalised")
             self.setup_file_details()
         else:
@@ -260,8 +351,8 @@ class GuiTestSetup:
             rec_from = 1
         elif "event" in self.analysis_type:
             rec_from = 4
-        elif self.analysis_type == "skinetics":
-            rec_from = 2
+        elif self.analysis_type in ["spkcnt", "Ri", "skinetics", "skinetics_table"]:
+            rec_from = get_settings(self.speed, self.analysis_type)["rec_from"]
         else:
             rec_from = self.rec_from_value
         return rec_from
@@ -274,8 +365,8 @@ class GuiTestSetup:
             rec_to = 3
         elif "event" in self.analysis_type:
             rec_to = 10
-        elif self.analysis_type == "skinetics":
-            rec_to = 7
+        elif self.analysis_type in ["spkcnt", "Ri", "skinetics", "skinetics_table"]:
+            rec_to = get_settings(self.speed, self.analysis_type)["rec_to"]
         else:
             rec_to = self.rec_to_value
         return rec_to
@@ -485,7 +576,6 @@ class GuiTestSetup:
             data = self.mw.loaded_file.data.im_array if Im_or_Vm == "Im" else self.mw.loaded_file.data.vm_array
             all_data_voltage_as_pandas_df = pd.DataFrame(data.transpose())  # Max sheet size is: 1048576, 16384
             all_data_voltage_as_pandas_df.to_csv(csv_filename, index=False, header=False)
-
 
         return csv_filename
 
@@ -710,7 +800,8 @@ class GuiTestSetup:
     def run_skinetics_analysis(self,
                                spike_detection_method,
                                bounds_vm=False,
-                               max_slope=False):
+                               max_slope=False,
+                               manual_threshold_override=False):
         """
         """
         self.reset_combobox_to_first_index(self.mw.mw.skinetics_thr_combobox)
@@ -718,7 +809,6 @@ class GuiTestSetup:
 
         self.left_mouse_click(self.mw.mw.skinetics_options_button)
         skinetics_dia = self.mw.dialogs["skinetics_options"].dia
-        self.enter_number_into_spinbox(skinetics_dia.skinetics_search_region_min, 1)
 
         if spike_detection_method == "auto_record":
             pass
@@ -728,8 +818,9 @@ class GuiTestSetup:
         elif spike_detection_method == "manual":
             keyPress(self.mw.mw.skinetics_thr_combobox, QtGui.Qt.Key_Down)
             keyPress(self.mw.mw.skinetics_thr_combobox, QtGui.Qt.Key_Down)
+            thr = manual_threshold_override if manual_threshold_override is not False else -30
             self.enter_number_into_spinbox(self.mw.mw.skinetics_man_thr_spinbox,
-                                           -30)
+                                           thr)
 
         if max_slope:
             self.switch_groupbox(skinetics_dia.max_slope_groupbox, on=True)
@@ -768,8 +859,8 @@ class GuiTestSetup:
         self.enter_number_into_spinbox(skinetics_dia.mahp_stop, mahp_stop)
         self.enter_number_into_spinbox(skinetics_dia.mahp_start, mahp_start)
 
-    def manually_select_spike(self, rec, spike_num, overide_time_and_amplitude=False, rect_size_as_perc=0.001):  # reworked but should work fine for spikecalc
-
+    def manually_select_spike(self, rec, spike_num, overide_time_and_amplitude=False):  # reworked but should work fine for spikecalc
+        """ TODO: need to run  self.expand_xaxis_around_peak() first """
         if overide_time_and_amplitude:
             time_ = overide_time_and_amplitude["time"]
             amplitude = overide_time_and_amplitude["amplitude"]
@@ -777,17 +868,23 @@ class GuiTestSetup:
             time_ = self.adata.peak_times_[rec][spike_num]
             amplitude = self.adata.all_true_peaks[rec][spike_num]
 
-        x_axis_view = self.mw.loaded_file_plot.upperplot.vb.state["limits"]["xLimits"]
-        x_offset = (x_axis_view[1] - x_axis_view[0]) * 0.001
+        self.select_spike_action(time_, amplitude)
 
-        y_axis_view = self.mw.loaded_file_plot.upperplot.vb.state["limits"]["yLimits"]
-        y_offset = (y_axis_view[1] - y_axis_view[0]) * 0.005
+    def select_spike_action(self, time_, amplitude):
+        """ TODO: need to run  self.expand_xaxis_around_peak() first """
+        for padding in [[0.0005, 0.001]]:  # 0.001, 0.005  TODO: cycle through a few different ones if the spike is not selected. Alternatively need to convert to % of x and y
 
-        [x_start, delta_x] = [time_ - x_offset, x_offset * 2]
-        [y_start, delta_y] = [amplitude - np.abs(y_offset), np.abs(y_offset) * 2]
+            x_axis_view = self.mw.loaded_file_plot.upperplot.vb.state["limits"]["xLimits"]
+            x_offset = (x_axis_view[1] - x_axis_view[0]) * padding[0]
 
-        ax = QtCore.QRectF(x_start, y_start, delta_x, delta_y)
-        self.mw.loaded_file_plot.upperplot.vb.sig_plot_click_event.emit(ax)
+            y_axis_view = self.mw.loaded_file_plot.upperplot.vb.state["limits"]["yLimits"]
+            y_offset = (y_axis_view[1] - y_axis_view[0]) * padding[1]
+
+            [x_start, delta_x] = [time_ - x_offset, x_offset * 2]
+            [y_start, delta_y] = [amplitude - np.abs(y_offset), np.abs(y_offset) * 2]
+
+            ax = QtCore.QRectF(x_start, y_start, delta_x, delta_y)
+            self.mw.loaded_file_plot.upperplot.vb.sig_plot_click_event.emit(ax)
 
     def run_spikecount_analysis(self, analysis_to_run=False, im_setting=False,
                                 bounds_vm=False, bounds_im=False,
@@ -910,20 +1007,21 @@ class GuiTestSetup:
                               arg2,
                               equal_nan=True)
 
-    def get_frequency_data_from_qtable(self, analysis_df_colname, rec_from, rec_to):
+    def get_frequency_data_from_qtable(self, analysis_df_colname, row_from, row_to):
 
         headers = self.mw.cfgs.get_events_frequency_table_col_headers(analysis_df_colname)
-
         all_data = []
         for header in headers:
             header_items = self.mw.mw.table_tab_tablewidget.findItems(header + "   ", QtGui.Qt.MatchExactly)
-            num_recs = rec_to - rec_from + 1
-            table_data, __ = self.get_all_item_data_from_qtable(header_items, num_recs,  return_str=True)
+            num_rows = row_to - row_from + 1
+
+            table_data, __ = self.get_all_item_data_from_qtable(header_items, num_rows,  return_str=True)
+
             all_data.append(table_data)
 
         return all_data
 
-    def get_data_from_qtable(self, analysis_df_colname, rec_from, rec_to, analysis_type="spkcnt", return_regions=False):
+    def get_data_from_qtable(self, analysis_df_colname, row_from, row_to, analysis_type="spkcnt", return_regions=False):
         """
         """
         if analysis_type in ["spkcnt", "Ri"]:
@@ -935,16 +1033,16 @@ class GuiTestSetup:
                                                             analysis_df_colname)
         header_items = self.mw.mw.table_tab_tablewidget.findItems(header + "   ", QtGui.Qt.MatchExactly)
 
-        num_recs = rec_to - rec_from + 1
+        num_rows = row_to - row_from + 1
 
-        table_data, regions = self.get_all_item_data_from_qtable(header_items, num_recs)
+        table_data, regions = self.get_all_item_data_from_qtable(header_items, num_rows)
 
         if return_regions:
             return regions
         else:
             return np.array(table_data)
 
-    def get_all_item_data_from_qtable(self, header_items, num_recs, return_str=False):
+    def get_all_item_data_from_qtable(self, header_items, num_rows, return_str=False):
         """
         return str: Will always try and convert item from str to float. return None if item cannot be converted to float if False, otherwise string
         """
@@ -953,7 +1051,7 @@ class GuiTestSetup:
             col_idx = header_item.column()
             table_data = []
 
-            for i in range(2, num_recs + 2):  # account for first 2 rows are cell name and title
+            for i in range(2, num_rows + 2):  # account for first 2 rows are cell name and title
 
                 if not self.mw.mw.table_tab_tablewidget.item(i, col_idx):
                     continue
@@ -975,17 +1073,23 @@ class GuiTestSetup:
 
         return table_data, regions
 
-    def handle_analyse_specific_recs(self, analyse_specific_recs, data=False):
+    def handle_analyse_specific_recs(self, analyse_specific_recs, data=False, rec_from=None, rec_to=None):
         """
         set_records_and_get_data_for_analyse_specific_recs
         """
-        if analyse_specific_recs:
-            self.set_analyse_specific_recs(self.rec_from(),
-                                           self.rec_to())
-            if np.any(data):
-                data = self.process_test_data_for_analyse_recs(data, self.rec_from(), self.rec_to())
+        if rec_from is None:
+            rec_from = self.rec_from()
 
-            return data, self.rec_from(), self.rec_to()
+        if rec_to is None:
+            rec_to = self.rec_to()
+
+        if analyse_specific_recs:
+            self.set_analyse_specific_recs(rec_from,
+                                           rec_to)
+            if np.any(data):
+                data = self.process_test_data_for_analyse_recs(data, rec_from, rec_to)
+
+            return data, rec_from, rec_to
         else:
             return data, 0, self.adata.num_recs - 1
 
@@ -1174,7 +1278,7 @@ class GuiTestSetup:
             test_results[result] = utils.np_empty_nan(self.adata.num_recs)
             for rec in range(rec_from, rec_to+1):
                 data = self.adata.vm_array if result[0:3] == "vm_" else self.adata.im_array
-                test_results[result][rec] = np.mean(data[rec][all_start_stop_times[bound]["all_start_idx"][rec]:all_start_stop_times[bound]["all_stop_idx"][rec]])
+                test_results[result][rec] = np.mean(data[rec][all_start_stop_times[bound]["all_start_idx"][rec]:all_start_stop_times[bound]["all_stop_idx"][rec] + 1])
 
         test_delta_im_pa = test_results["im_steady_state"] - test_results["im_baseline"]
         test_delta_vm_mv = test_ir = None
@@ -1258,6 +1362,7 @@ class GuiTestSetup:
                                            "5")
 
             tgui.mw.mw.actionEvents_Analyis_Options.trigger()
+            tgui.set_combobox(tgui.mw.dialogs["events_analysis_options"].dia.event_fit_method_combobox, idx=1)
             tgui.switch_checkbox(tgui.mw.dialogs["events_analysis_options"].dia.biexp_fit_adjust_start_point_checkbox,
                                  on=(not overide_biexp_adjust_start_point))
 
@@ -1304,7 +1409,6 @@ class GuiTestSetup:
 
         self.left_mouse_click(
                                dialog.omit_time_periods_dialog.dia.omit_times_buttonbox.button(QtWidgets.QDialogButtonBox.Ok))
-
 
     def fill_tablewidget_with_items(self, tablewidget, array_to_fill):
 
@@ -1353,6 +1457,11 @@ class GuiTestSetup:
         # fill in the user-im table with int 0:num_records (simply for convenience) and run analysis
         rows_to_fill_in = rec_to - rec_from + 1
         self.fill_user_im_input_widget(rows_to_fill_in, self.mw.mw.ir_set_im_button)
+
+        self.mw.ir_bounds.bounds["upper_bl_lr"].setRegion([self.baseline_time()[0],
+                                                           self.baseline_time()[1]])
+        self.mw.ir_bounds.bounds["upper_exp_lr"].setRegion([self.exp_time()[0],
+                                                            self.exp_time()[1]])
 
         if set_sag_analysis:
             self.turn_on_set_sag_analysis()
@@ -1443,28 +1552,29 @@ class GuiTestSetup:
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def run_artificial_skinetics_analysis(self, spike_detection_method="auto_record", interp=False, max_cutoff=90,
-                                          min_cutoff=10, run_with_bounds=False, override_mahp_fahp_defaults=False, max_slope=False):
+                                          min_cutoff=10, run_with_bounds=False, override_mahp_fahp_defaults=False, max_slope=False, first_deriv_cutoff=5, thr_search_region=1,
+                                          manual_threshold_override=False):
 
-        self.setup_configs_for_test_spike_detection(interp, max_cutoff, min_cutoff, override_mahp_fahp_defaults)
+        self.setup_configs_for_test_spike_detection(interp, max_cutoff, min_cutoff, override_mahp_fahp_defaults, first_deriv_cutoff, thr_search_region)
 
         if run_with_bounds:
             bounds_vm = self.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs=True)
         else:
             bounds_vm = False
 
-        self.run_skinetics_analysis(spike_detection_method, bounds_vm=bounds_vm, max_slope=max_slope)
+        self.run_skinetics_analysis(spike_detection_method, bounds_vm=bounds_vm, max_slope=max_slope, manual_threshold_override=manual_threshold_override)
 
         return bounds_vm
 
-    def setup_configs_for_test_spike_detection(self, interp, max_cutoff, min_cutoff, override_mahp_fahp_defaults):
+    def setup_configs_for_test_spike_detection(self, interp, max_cutoff, min_cutoff, override_mahp_fahp_defaults, first_deriv_cutoff, thr_search_region):
 
         self.mw.mw.actionSpike_Kinetics_Options_2.trigger()
 
         self.left_mouse_click(self.mw.dialogs["skinetics_options"].dia.first_deriv_cutoff_radiobutton)
         self.enter_number_into_spinbox(self.mw.dialogs["skinetics_options"].dia.first_deriv_cutoff_spinbox,
-                                       5)
+                                       first_deriv_cutoff)
 
-        self.enter_number_into_spinbox(self.mw.dialogs["skinetics_options"].dia.skinetics_search_region_min, 2)  # the theoretical min is ts * (self.spike_width / 4) = 0.0007
+        self.enter_number_into_spinbox(self.mw.dialogs["skinetics_options"].dia.skinetics_search_region_min, thr_search_region)  # the theoretical min is ts * (self.spike_width / 4) = 0.0007
 
         if override_mahp_fahp_defaults:
             self.set_skinetics_ahp_spinboxes(self.mw.dialogs["skinetics_options"].dia,
@@ -1611,19 +1721,29 @@ class GuiTestSetup:
                 num_spikes += len(rec_dict.keys())
         return num_spikes
 
-    def get_entire_qtable(self):
-        row_num = self.mw.mw.table_tab_tablewidget.rowCount()
-        col_num = self.mw.mw.table_tab_tablewidget.columnCount()
-        entire_qtable = utils.np_empty_nan((row_num - 2,
+    def get_entire_qtable(self, table=None, na_as_inf=False, start_row=2):
+        """"""
+        if table is None:
+            table = self.mw.mw.table_tab_tablewidget
+
+        row_num = table.rowCount()
+        col_num = table.columnCount()
+        entire_qtable = utils.np_empty_nan((row_num - start_row,
                                             col_num))
-        for row in range(2, row_num):
+        for row in range(start_row, row_num):
             for col in range(col_num):
 
+                if na_as_inf:
+                    if table.item(row, col) is not None and table.item(row, col).text() == "N/A":
+                        data = np.inf
+                        entire_qtable[row - start_row, col] = data
+                        continue
+
                 try:
-                    data = np.float(self.mw.mw.table_tab_tablewidget.item(row, col).text())
+                    data = np.float(table.item(row, col).text())
                 except (AttributeError, ValueError):
                     data = np.nan
-                entire_qtable[row - 2, col] = data
+                entire_qtable[row - start_row, col] = data
 
         return entire_qtable
 
@@ -1689,7 +1809,7 @@ class GuiTestSetup:
 
     def get_spike_selection_info_for_analysis_type(self, tgui, rec, spike_rec_idx):
 
-        if tgui.analysis_type in ["events_multi_record", "events_one_record"]:
+        if tgui.analysis_type in ["events_multi_record", "events_multi_record_norm", "events_one_record"]:
 
             deleted_spike_peak = tgui.adata.all_rec_b1_offsets[rec][spike_rec_idx] * tgui.adata.b1 + tgui.adata.resting_im
             peak_plot = tgui.mw.loaded_file_plot.peak_plot
@@ -1710,7 +1830,8 @@ class GuiTestSetup:
         Function to test manaul spike (spikecount analysis) or events (event analyis; herby events are referred to as spikes for convenience).
         First spikes are manually deleted, then manually selected. At each stage a test function is run to ensure the analysis is correctly
         updated. This requires updating the EE results (by analysing in EE) and the test results (by manipulating / saving at each stage
-        the data in tgui.adata.
+        the data in tgui.adata. For manually selecting events, need to test againstt the number of spikes at each point a spike was deleted
+        e.g. if htere are 5 spikes and we deleted 3, need to test against the point there are 2, 3, 4, 5 spikes
 
         filenum - idx of file analysed
 
@@ -1745,29 +1866,32 @@ class GuiTestSetup:
 
             tgui.click_upperplot_spotitem(peak_plot, spike_rec_idx, doubleclick_to_delete=True)
 
+  #          QtWidgets.QApplication.processEvents()
+   #         breakpoint()
             self.remove_spike_from_adata(tgui, rec, spike_rec_idx, tgui.adata.peak_times[tgui.time_type])
+    #        QtWidgets.QApplication.processEvents()
+     #       breakpoint()
 
             peak_times[dict_key] = copy.deepcopy(copy.deepcopy(tgui.adata.peak_times))
-
             test_function(tgui, filenum, rec_from, rec_to)
 
-            peak_times[dict_key]["data"] = copy.deepcopy(copy.deepcopy(tgui.adata.peak_times))
+            peak_times[dict_key]["data"] = copy.deepcopy(copy.deepcopy(tgui.adata.peak_times))  # this creates a snapshot at each time a spike is deleted
             peak_times[dict_key]["time"] = deleted_spike_time
             peak_times[dict_key]["amplitude"] = deleted_spike_peak
             peak_times[dict_key]["rec"] = rec
 
-        deleted_spike_keys = ["m_four", "m_three", "m_two", "m_one"]
+        deleted_spike_keys = [sublist[2] for sublist in reversed(spikes_to_delete)]  # cycle last-to-first through deleted spikes
         for idx, deleted_spike_key in enumerate(deleted_spike_keys):
             rec = peak_times[deleted_spike_key]["rec"]
             tgui.mw.update_displayed_rec(rec)
 
             self.expand_xaxis_around_peak(tgui, peak_times[deleted_spike_key]["time"])
 
-            tgui.manually_select_spike(rec, spike_num=None, overide_time_and_amplitude=peak_times[deleted_spike_key], rect_size_as_perc=0.02)
+            tgui.manually_select_spike(rec, spike_num=None, overide_time_and_amplitude=peak_times[deleted_spike_key])
 
-            level_up_data = "all" if deleted_spike_key == "m_one" else deleted_spike_keys[idx + 1]
+            level_up_data = "all" if deleted_spike_key == "m_one" else deleted_spike_keys[idx + 1] # hacky after reducing num
+
             tgui.adata.peak_times = peak_times[level_up_data]["data"]
-
             test_function(tgui, filenum, rec_from, rec_to)
 
         tgui.mw.mw.actionBatch_Mode_ON.trigger()
@@ -1786,10 +1910,10 @@ class GuiTestSetup:
         adata_array[rec, :] = new_peak_times
 
     @staticmethod
-    def expand_xaxis_around_peak(tgui, peak_time):
+    def expand_xaxis_around_peak(tgui, peak_time, padding=0.25):
 
-        tgui.mw.loaded_file_plot.upperplot.setXRange(peak_time - 1,
-                                                     peak_time + 1)
+        tgui.mw.loaded_file_plot.upperplot.setXRange(peak_time - padding,  # TODO: this parameter for zooming can cause problems if not wide enough / too not wide
+                                                     peak_time + padding)
 
     def setup_max_slope_events(self, tgui, smooth=False, use_baseline_crossing=False):
 
@@ -1828,3 +1952,57 @@ class GuiTestSetup:
         options_dialog = tgui.mw.dialogs["events_analysis_options"]
 
         return options_dialog
+
+    def set_widgets_for_artificial_event(self, tgui, run=True):
+        """
+        """
+        tgui.set_analysis_type("events_template_matching")
+
+        template_1_coefs, template_2_coefs, template_3_coefs = list(np.unique(tgui.adata.decay_offsets))
+
+        tgui.left_mouse_click(tgui.mw.mw.events_template_generate_button)
+        dialog = tgui.mw.dialogs["events_template_generate"]
+
+        tgui.set_combobox(dialog.dia.choose_template_combobox, 0)
+        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_1_coefs / tgui.adata.rise_div)
+        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_1_coefs)
+
+        tgui.set_combobox(dialog.dia.choose_template_combobox, 1)
+        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_2_coefs / tgui.adata.rise_div)
+        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_2_coefs)
+
+        tgui.set_combobox(dialog.dia.choose_template_combobox, 2)
+        tgui.enter_number_into_spinbox(dialog.dia.rise_spinbox, template_3_coefs / tgui.adata.rise_div)
+        tgui.enter_number_into_spinbox(dialog.dia.decay_spinbox, template_3_coefs)
+
+        tgui.set_analysis_type("events_template_matching")
+        tgui.left_mouse_click(tgui.mw.mw.events_template_analyse_all_button)
+        tgui.set_widgets_for_artificial_event_data(tgui, "template", biexp=True)
+        tgui.set_combobox(tgui.mw.dialogs["template_analyse_events"].dia.template_to_use_combobox, 2)
+        tgui.set_combobox(tgui.mw.dialogs["template_analyse_events"].dia.detection_cutoff_combobox, 0)
+
+        if run:
+            tgui.left_mouse_click(tgui.mw.dialogs["template_analyse_events"].dia.fit_all_events_button)
+
+        return template_1_coefs, template_2_coefs, template_3_coefs
+
+    def set_frequency_data_table(self, tgui, analysis_type):
+        """
+        """
+        if analysis_type == "frequency":
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_frequency_checkbox, on=True)
+        elif analysis_type == "amplitude":
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_amplitude_checkbox, on=True)
+        elif analysis_type == "rise_time":
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_rise_time_checkbox, on=True)
+        elif analysis_type == "decay_amplitude_percent":
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_decay_percent_checkbox, on=True)
+        elif analysis_type == "event_time":
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_event_time_checkbox, on=True)
+        elif analysis_type in ["decay_tau", "biexp_rise", "biexp_decay"]:
+            indexes = {"decay_tau": 0, "biexp_rise": 1, "biexp_decay": 2}
+            tgui.mw.mw.table_event_cum_prob_all_fits_combobox.setCurrentIndex(indexes[analysis_type]),
+            tgui.switch_checkbox(tgui.mw.mw.table_event_cum_prob_all_fits_checkbox,
+                                 on=True)
+
+        QtWidgets.QApplication.processEvents()

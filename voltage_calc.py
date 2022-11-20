@@ -125,7 +125,7 @@ def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz
 
     INPUTS:
         data: 1 x N signal
-        data: 1 x T template signal
+        template: 1 x T template signal
         fs: sampling frequency of the original signal
         low_hz, high_hz: frequency cutoffs in Hz
 
@@ -147,11 +147,11 @@ def get_filtered_template_data_deconvolution(data, template, fs, low_hz, high_hz
 
 def fft_filter_gaussian_window(data, low_hz, high_hz, num_samples, fs):
     """
-    Apply a low-pass filter Gaussian window in Fourier domain with a
-    straight high-pass cutoff.
+    Apply a band-pass filter in the frequency domain, low-pass Gaussian window and
+    sharp high-pass cutoff.
 
     INPUTS:
-        data: Fourier-tranfsormed signal 1 ... N
+        data: Fourier-transformed signal 1 ... N
         see get_filtered_template_data_deconvolution() for other inputs
     """
     freqs = fftpack.fftfreq(num_samples, 1 / fs)
@@ -517,7 +517,7 @@ def update_baseline_that_is_before_previous_event_peak(data, time_, peak_idx, ru
     as the second event's baseline.
     """
     bl_func = np.argmin if run_settings["direction"] == 1 else np.argmax
-    bl_idx = bl_func(data[run_settings["previous_event_idx"]:peak_idx+1])
+    bl_idx = bl_func(data[run_settings["previous_event_idx"]:peak_idx + 1])
     bl_idx += run_settings["previous_event_idx"]
     bl_time = time_[bl_idx]
     bl_im = data[bl_idx]
