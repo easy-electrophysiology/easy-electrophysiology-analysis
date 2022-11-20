@@ -25,6 +25,7 @@ class TestLinearRegionsImSettings:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = "fast" # has no effect
         tgui.setup_artificial_data(request.param)
         tgui.raise_mw_and_give_focus()
         yield tgui

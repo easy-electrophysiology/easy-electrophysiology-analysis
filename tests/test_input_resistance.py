@@ -17,6 +17,8 @@ keyClick = QTest.keyClick
 from setup_test_suite import GuiTestSetup
 os.environ["PYTEST_QT_API"] = "pyside2"
 
+SPEED = "fast"
+
 class TestInputResistanceGui:
 
     @pytest.fixture(scope="function", params=["normalised", "cumulative"], ids=["normalised", "cumulative"])
@@ -24,6 +26,7 @@ class TestInputResistanceGui:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data(request.param, analysis_type="Ri")
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -77,10 +80,7 @@ class TestInputResistanceGui:
     def test_input_resistance_vm_one_sample_case(self, tgui):
         """
         """
-        tgui.rec_from_value = 0
-        tgui.rec_to_value = 0
-
-        __, __, _ = tgui.handle_analyse_specific_recs(True)
+        __, __, _ = tgui.handle_analyse_specific_recs(True, rec_from=0, rec_to=0)
         tgui.switch_to_input_resistance_and_set_im_combobox()
         tgui.run_ri_analysis_bounds()
 
@@ -165,18 +165,22 @@ class TestInputResistanceGui:
         """
         test_vm, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs,
                                                                       data=tgui.adata.current_injection_amplitude)
+
         rows_to_fill_in = tgui.run_ri_analysis_user_input_im(rec_from, rec_to)
 
         test_im = np.linspace(0, rows_to_fill_in-1, rows_to_fill_in)
         test_input_resistance = tgui.get_test_ir(test_vm, user_test_im=test_im)
 
-        assert np.isclose(tgui.mw.loaded_file.ir_data["input_resistance"][0],
-                          test_input_resistance[0], 1e-2)
-        assert np.isclose(tgui.mw.stored_tabledata.ir_data[0]["input_resistance"][0],
-                          test_input_resistance[0], 1e-2)
-        assert np.isclose(tgui.get_data_from_qtable("input_resistance", 1, 1, analysis_type="Ri"),
-                          test_input_resistance[0], 1e-2)
-
+        try:
+            assert np.isclose(tgui.mw.loaded_file.ir_data["input_resistance"][0],
+                              test_input_resistance[0], 1e-2)
+            assert np.isclose(tgui.mw.stored_tabledata.ir_data[0]["input_resistance"][0],
+                              test_input_resistance[0], 1e-2)
+            assert np.isclose(tgui.get_data_from_qtable("input_resistance", 1, 1, analysis_type="Ri"),
+                              test_input_resistance[0], 1e-2)
+        except:
+            breakpoint()
+            
     def test_user_im_input_is_valid(self, tgui):
         test_vm, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs=False)
 
@@ -444,8 +448,10 @@ class TestInputResistanceGui:
                 assert np.array_equal(test_dataset["im_steady_state"], test_results["im_steady_state"], equal_nan=True)
                 assert np.array_equal(test_dataset["vm_delta"], test_delta_vm_mv, equal_nan=True)
                 assert np.array_equal(test_dataset["im_delta"], test_delta_im_pa, equal_nan=True)
-                assert np.isclose(test_dataset["input_resistance"][0], test_ir.slope, atol=1e-10, rtol=0)
-
+                try:
+                    assert np.isclose(test_dataset["input_resistance"][0], test_ir.slope, atol=1e-10, rtol=0)
+                except:
+                    breakpoint()
             # this always seems to get the last file on the table so no need to account for anything
             assert np.array_equal(tgui.get_data_from_qtable("vm_baseline", rec_from, rec_to, analysis_type="Ri"),
                                   test_results["vm_baseline"][rec_from:rec_to + 1])

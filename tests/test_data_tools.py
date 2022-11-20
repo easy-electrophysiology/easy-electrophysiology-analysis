@@ -17,11 +17,13 @@ from ephys_data_methods import core_analysis_methods
 from utils import utils
 keyClick = QTest.keyClick
 from setup_test_suite import GuiTestSetup
+from slow_vs_fast_settings import get_settings
 import scipy.signal
 import copy
 import peakutils
 from sys import platform
 
+SPEED = "fast"
 os.environ["PYTEST_QT_API"] = "pyside2"
 
 class TestDataToolsGui:
@@ -33,6 +35,7 @@ class TestDataToolsGui:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data(request.param, analysis_type="data_tools")
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -275,6 +278,7 @@ class TestDataToolsGui:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data("cumulative", analysis_type="spkcnt")
         tgui.mw.raise_()
 
@@ -318,9 +322,10 @@ class TestDataToolsGui:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data("cumulative", analysis_type="spkcnt")
         tgui.mw.raise_()
-        rec = 5
+        rec = 3
         tgui.mw.update_displayed_rec(rec)
 
         tmp_time = tgui.mw.loaded_file.data.min_max_time
@@ -330,11 +335,13 @@ class TestDataToolsGui:
         tgui.left_mouse_click(tgui.mw.dialogs["normalise_time"].dia.normalise_time_buttonbox.button(QtWidgets.QDialogButtonBox.Apply))
         tgui.mw.update_displayed_rec(rec)
 
+
         assert (tmp_time[0][0] == tgui.mw.loaded_file.data.min_max_time[:, 0]).all(),                                    "new time does not match orig file rec time - start "
         assert (tmp_time[0][1] == tgui.mw.loaded_file.data.min_max_time[:, 1]).all(),                                    "new time does not match orig file rec time - stop"
         assert tgui.eq(tmp_time[1][1], (tgui.mw.loaded_file.data.min_max_time[0][1] * 2) + tgui.adata.ts), "second rec is not normalised first rec * 2"
         assert tgui.eq(tgui.mw.loaded_file.data.min_max_time[-1], tgui.mw.loaded_file.data.min_max_time[0]),             "first and last rec time last sample do not match"
         assert (tmp_x_axis != tgui.mw.loaded_file_plot.curve_upper.xData).all(),                                         "x axis plot incorrect"
+
         assert tgui.eq(tgui.mw.loaded_file_plot.curve_upper.xData, tgui.mw.loaded_file.data.time_array[rec]),            "plot incorrect"
 
         tgui.shutdown()
@@ -360,7 +367,7 @@ class TestDataToolsGui:
 
         return new_data_array
 
-    @pytest.mark.parametrize("mode", ["dont_align_across_recs", "dont_align_across_recs"])
+    @pytest.mark.parametrize("mode", ["dont_align_across_recs", "align_across_recs"])
     @pytest.mark.parametrize("match_im", [True, False])
     def test_remove_baseline(self, tgui, match_im, mode):
         """
@@ -441,10 +448,9 @@ class TestDataToolsGui:
 
         tgui.mw.mw.actionDetrend.trigger()
         tgui.enter_number_into_spinbox(tgui.mw.dialogs["detrend"].dia.sepsc_detrend_spinbox,  poly_order)
-
+        
         QtCore.QTimer.singleShot(1500, lambda: tgui.mw.messagebox.close())
         tgui.left_mouse_click(tgui.mw.dialogs["detrend"].dia.apply_button)
-
         assert utils.allclose(tgui.mw.loaded_file.data.vm_array - save_mean.T, 0, 1e-10)
 
     def test_average__all_records(self, tgui):
@@ -470,7 +476,7 @@ class TestDataToolsGui:
 
         # randomly split the record numbers into chunks of random size to average
         permute_records = np.random.permutation(range(1, tgui.adata.num_recs + 1))
-        split_idx = np.sort(np.random.choice(range(1, tgui.adata.num_recs), 8, replace=False))
+        split_idx = np.sort(np.random.choice(range(1, tgui.adata.num_recs), get_settings(tgui.speed, "data_tools")["recs_to_split"], replace=False))
         recs_to_average = np.split(permute_records, split_idx)
 
         # save the average of the recs to average, and input them into the table and run in EE and test

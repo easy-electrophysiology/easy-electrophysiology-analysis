@@ -14,6 +14,7 @@ from ephys_data_methods import current_calc, core_analysis_methods
 from utils import utils
 import utils_for_testing as test_utils
 from setup_test_suite import GuiTestSetup
+from slow_vs_fast_settings import get_settings
 from PySide2.QtCore import Signal
 keyClicks = QTest.keyClicks
 os.environ["PYTEST_QT_API"] = "pyside2"
@@ -21,6 +22,8 @@ os.environ["PYTEST_QT_API"] = "pyside2"
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Test Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+SPEED = "fast"
 
 class TestSpikeCountGui:
     """
@@ -31,6 +34,7 @@ class TestSpikeCountGui:
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.test_update_fileinfo()
+        tgui.speed = SPEED
         tgui.setup_artificial_data(request.param)
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -172,7 +176,7 @@ class TestSpikeCountGui:
                                                             base_rec=rec,
                                                             add_offset_back=True)
 
-            results[key] = np.mean(tgui.adata.im_array[rec][start_idx:stop_idx])
+            results[key] = np.mean(tgui.adata.im_array[rec][start_idx:stop_idx + 1])
 
         im_injection_between_bounds_at_rec = results["exp"] - results["bl"]
 
@@ -201,7 +205,7 @@ class TestSpikeCountGui:
                                                             base_rec=test_rheobase_rec,
                                                             add_offset_back=False)
 
-            baseline = np.mean(im_ramp_array[test_rheobase_rec][bl_upper:bl_lower])
+            baseline = np.mean(im_ramp_array[test_rheobase_rec][bl_upper:bl_lower + 1])
 
         else:
             baseline = provide_baselines_instead_or_measure_from_data[test_rheobase_rec]
@@ -216,8 +220,8 @@ class TestSpikeCountGui:
         saved_data = tgui.mw.loaded_file.saved_rheobase_settings["im_array"]
         test_rheobase = self.find_true_rheobase_and_exact_im(tgui, saved_data, test_rheobase_rec,
                                                              provide_baselines_instead_or_measure_from_data=baselines)
-        assert tgui.mw.loaded_file.spkcnt_data["rheobase"][1] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.mw.stored_tabledata.spkcnt_data[filenum]["rheobase"][1] == test_rheobase, "stored table data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase"] == test_rheobase, "stored table data rheobase is incorrect after ramp user Im protocol"
         assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
                        test_rheobase[0]), "table rheobase is incorrect after ramp user Im protocol"
 
@@ -569,7 +573,7 @@ class TestSpikeCountGui:
         tgui.shutdown()
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
-    @pytest.mark.parametrize("im_analysis_type", ["bounds_align_recs", "bounds_not_align_recs", "im_protocol"])
+    @pytest.mark.parametrize("im_analysis_type",  ["bounds_align_recs", "bounds_not_align_recs", "im_protocol"])
     def test_rheobase(self,  tgui, im_analysis_type, analyse_specific_recs):
 
         for filenum in range(3):
@@ -597,9 +601,9 @@ class TestSpikeCountGui:
                                          im_setting=im_setting,
                                          bounds_im=bounds_im)
 
-            assert tgui.eq(tgui.mw.loaded_file.spkcnt_data["rheobase"][0],
+            assert tgui.eq(tgui.mw.loaded_file.spkcnt_data.loc[0,"rheobase_rec"],
                            test_rheobase_rec)
-            assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[filenum]["rheobase"][0],
+            assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase_rec"],
                            test_rheobase_rec)
 
             if im_analysis_type == "im_protocol":
@@ -634,9 +638,9 @@ class TestSpikeCountGui:
         tgui.run_spikecount_analysis(["rheobase_record"],
                                      im_setting="user_input_im")
 
-        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data["rheobase"][0],
+        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data.loc[0,"rheobase_rec"],
                        test_rheobase_rec)
-        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0]["rheobase"][0],
+        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0,"rheobase_rec"],
                        test_rheobase_rec)
         assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
                        tgui.mw.cfgs.spkcnt["user_input_im"]["step"][test_rheobase_rec - rec_from][0])  # the user input Im is indexed from the rec_from
@@ -662,13 +666,38 @@ class TestSpikeCountGui:
 
         test_rheobase = self.find_true_rheobase_and_exact_im(tgui, im_ramp_array, test_rheobase_rec, bounds_im=bounds_im)
 
-        try:
-            assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["rheobase"][1],
-                                  test_rheobase,
-                                  1e-10)
-        except:
-            breakpoint()
-        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0]["rheobase"][1],
+        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"],
+                              test_rheobase,
+                              1e-10)
+
+        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
+                              test_rheobase,
+                              1e-10)
+        assert utils.allclose(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+                              test_rheobase,
+                              1e-10)
+
+    def test_rheobase_exact_1_rec(self, tgui):
+        """v2.4.0 had a bug in which 1 rec rheobase analysis would crashs"""
+        tgui.setup_artificial_data(tgui.time_type, "spkcnt_1_rec")
+
+        num_recs, __, rec_from, rec_to = self.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui,
+                                                                                              analyse_specific_recs=False)
+        __ = self.fill_im_protocol_with_default_ramp_step(tgui, accept=True)
+
+        tgui.run_spikecount_analysis(["rheobase_exact"],
+                                     im_setting="user_input_im")
+
+        ramp = tgui.mw.loaded_file.make_im_protocol_from_user_input(
+                                                                    tgui.mw.cfgs.spkcnt["user_input_im"]["ramp"]["protocol"])
+
+        test_rheobase = ramp[0][tgui.adata.spike_peak_idx[0][0].astype('int')]
+
+        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"],
+                              test_rheobase,
+                              1e-10)
+
+        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
                               test_rheobase,
                               1e-10)
         assert utils.allclose(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
@@ -724,8 +753,8 @@ class TestSpikeCountGui:
         baselines = np.zeros((num_recs, 1))
         test_rheobase = self.find_true_rheobase_and_exact_im(tgui, saved_data, test_rheobase_rec, provide_baselines_instead_or_measure_from_data=baselines)
 
-        assert tgui.mw.loaded_file.spkcnt_data["rheobase"][1] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.mw.stored_tabledata.spkcnt_data[0]["rheobase"][1] == test_rheobase,  "stored table data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"] == test_rheobase,  "stored table data rheobase is incorrect after ramp user Im protocol"
         assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0], test_rheobase[0]),  "table rheobase is incorrect after ramp user Im protocol"
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -778,6 +807,7 @@ class TestSpikeCountGui:
         peak_times = dict(all={"data": copy.deepcopy(tgui.adata.spike_sample_idx)},
                           m_one=dict(data=[], time=[]), m_two=dict(data=[], time=[]),
                           m_three=dict(data=[], time=[]), m_four=dict(data=[], time=[]))
+
         for rec, spike_rec_idx, dict_key in spikes_to_delete:
 
             tgui.mw.update_displayed_rec(rec)
@@ -798,14 +828,16 @@ class TestSpikeCountGui:
             peak_times[dict_key]["rec"] = rec
 
         tgui.left_mouse_click(tgui.mw.mw.spkcnt_click_mode_button)
-        deleted_spike_keys = ["m_four", "m_three", "m_two", "m_one"]
+        deleted_spike_keys = list(reversed([ele[2] for ele in spikes_to_delete]))
+
         for idx, deleted_spike_key in enumerate(deleted_spike_keys):
 
             rec = peak_times[deleted_spike_key]["rec"]
             tgui.mw.update_displayed_rec(rec)
 
             tgui.expand_xaxis_around_peak(tgui, peak_times[deleted_spike_key]["time"])
-            tgui.manually_select_spike(rec, spike_num=None, overide_time_and_amplitude=peak_times[deleted_spike_key], rect_size_as_perc=0.02)
+
+            tgui.manually_select_spike(rec, spike_num=None, overide_time_and_amplitude=peak_times[deleted_spike_key]) # , rect_size_as_perc=0.02)
 
             level_up_data = "all" if deleted_spike_key == "m_one" else deleted_spike_keys[idx + 1]
 
@@ -817,8 +849,7 @@ class TestSpikeCountGui:
         tgui.run_spikecount_analysis(["mean_isi_ms", "fs_latency_ms"])
 
     def spkcnt_spikes_to_delete_function(self, tgui, rec_from, rec_to):
-        spikes_to_delete = [[rec_from, 2, "m_one"], [rec_from, 0, "m_two"],  # higher first or plot peak idx becomes mismatched
-                            [rec_from + 3, 0, "m_three"], [rec_from + 8, 4, "m_four"]]
+        spikes_to_delete = get_settings(tgui.speed, tgui.analysis_type, num_recs=rec_from)["manually_del"]
         return spikes_to_delete, rec_from, rec_to
 
     def event_selection_test_fs_latency(self, tgui, filenum, rec_from, rec_to):

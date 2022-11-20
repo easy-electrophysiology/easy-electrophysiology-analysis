@@ -25,7 +25,7 @@ class GenerateArtificialData:
         self.time_stop = time_stop
         self.im_offset = -20
         self.resting_vm = -60  #
-
+        self.time_type = None  # filled in setup_test_suite TODO remove from all function calls
         self.rec_time = time_stop
         self.fs = (self.num_samples - 1) / self.rec_time
         self.ts = 1 / self.fs
@@ -105,7 +105,7 @@ class GenerateArtificialData:
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class ArtificialCurveFitting(GenerateArtificialData):
-    def __init__(self):
+    def __init__(self, num_recs=5):
         """
         Create Curve Fitting artificial data for testing. 
         
@@ -120,11 +120,15 @@ class ArtificialCurveFitting(GenerateArtificialData):
         For more detail, see the test_curve_fitting.py.
         
         """
-        super().__init__(num_recs=5, num_samples=8192, time_stop=4.5)  # long to run, low num recs
+        super().__init__(num_recs=num_recs, num_samples=2048, time_stop=1.2)  # long to run, low num recs
 
-        self.function_samples = 2000
-        self.start_sample = 3000
+        self.function_samples = 500
+        self.start_sample = 650
         self.stop_sample = self.start_sample + self.function_samples
+
+        self.store_biexp_event_func_data = [[] for __ in range(num_recs)]
+        for rec in range(num_recs):
+            self.store_biexp_event_func_data[rec] = []
 
         self.start_times = None  # These are overwritten in insert_function_to_data() to handle dynamic norm vs. cumulative time settings
         self.stop_times = None
@@ -227,7 +231,7 @@ class ArtificialCurveFitting(GenerateArtificialData):
                                           }
                                          )
 
-    def insert_monoexp_function(self, orig_func_type):  # TODO: im not tested!
+    def insert_monoexp_function(self, orig_func_type):  # TODO: im not tested! FUNCTION NAME CONFUSING INSERT ANY FUNCTIN!
         """
         Insert a function of func_type into the data.
 
@@ -236,7 +240,7 @@ class ArtificialCurveFitting(GenerateArtificialData):
         if min is tested, flip function so it is negative. If mean / median is tested, do a large offset as makes it
         easier to see the true mean / median (if it is a monoexp function the mean is close to zero)
         """
-        if orig_func_type in ["min", "max", "mean", "median"]:
+        if orig_func_type in ["min", "max", "mean", "median", "area_under_curve_cf"]:
             func_type = "biexp_event"
         else:
             func_type = orig_func_type
@@ -262,6 +266,9 @@ class ArtificialCurveFitting(GenerateArtificialData):
 
             if orig_func_type in ["mean", "median"]:
                 func_data += 50
+
+            if func_type == "biexp_event":
+                self.store_biexp_event_func_data[rec].append(func_data)
 
             self.im_array[rec, self.start_sample:self.stop_sample] = func_data
             self.vm_array[rec, self.start_sample:self.stop_sample] = func_data
@@ -393,8 +400,7 @@ class EventAndSpikesMaster(GenerateArtificialData):
         self.peak_times = dict()
 
         # make a cannonical spike and array to fill with spikes
-        min_spikes = 15 if self.num_recs == 1 else 5
-        self.spikes_per_rec = np.random.randint(min_spikes, self.max_num_spikes, (self.num_recs, 1)).squeeze()  # need at least 5 evs for some tests
+        self.spikes_per_rec = np.random.randint(self.min_spikes, self.max_num_spikes, (self.num_recs, 1)).squeeze()  # need at least 5 evs for some tests
         self.spikes_per_rec = np.atleast_1d(self.spikes_per_rec)
         self.spike_sample_idx = utils.np_empty_nan((self.num_recs, self.max_num_spikes))  # holds the idx of all spikes (start), add samples_from_start_to_peak to get peak value
         self.peak_times["normalised"] = utils.np_empty_nan((self.num_recs, self.max_num_spikes))
@@ -450,7 +456,7 @@ class EventAndSpikesMaster(GenerateArtificialData):
         if rec_from == rec_to:
             test_rheobase_rec = rec_from
         else:
-            test_rheobase_rec = int(np.random.randint(rec_from, rec_to - 10, 1))
+            test_rheobase_rec = int(np.random.randint(rec_from, rec_to - 1, 1))
 
         if change_spikeinfo:
             for rec, element in enumerate(spike_info):
@@ -529,9 +535,10 @@ class EventAndSpikesMaster(GenerateArtificialData):
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class TestArtificialSkCntData(EventAndSpikesMaster):
-    def __init__(self):
-        self.max_num_spikes = 50
-        super().__init__()
+    def __init__(self, max_num_spikes, min_spikes, num_recs=75):
+        self.max_num_spikes = max_num_spikes
+        self.min_spikes = min_spikes
+        super().__init__(num_recs)
 
         self.spike_width = 50
         self.cannonical_spike = self.generate_cannonical_spike()
@@ -550,9 +557,13 @@ class TestArtificialSkCntData(EventAndSpikesMaster):
         return cannonical_spike
 
 class TestArtificialsKinetics(EventAndSpikesMaster):
-    def __init__(self):
-        self.max_num_spikes = 50
-        super().__init__(num_recs=10, num_samples=64000, time_stop=2)
+    """
+    For peaks in skinetics, use all_true_peaks_idx
+    """
+    def __init__(self, num_recs, max_num_spikes, min_spikes, num_samples, time_stop):
+        self.max_num_spikes = max_num_spikes
+        self.min_spikes = min_spikes # 15 if num_recs == 1 else 5
+        super().__init__(num_recs=num_recs, num_samples=num_samples, time_stop=time_stop)
 
         self.spike_width = 100  # max spike width with freq = 1
         self.cannonical_spike_params = self.generate_cannonical_spike_params()
@@ -744,7 +755,7 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class TestArtificialEventData(EventAndSpikesMaster):
-    def __init__(self, num_recs, num_samples, time_stop, event_type="monoexp", event_samples=None, negative_events=True):
+    def __init__(self, num_recs, num_samples, time_stop, min_num_spikes, max_num_spikes, event_type="monoexp", event_samples=None, negative_events=True):
         """
         Generate events on a dataset. Similar to curve fitting, canonical coefficients for the events are initiated so that
         all events have the same b1 (modelled as a straight line) and decay(modelled as exponential event) This form was chosen
@@ -752,10 +763,11 @@ class TestArtificialEventData(EventAndSpikesMaster):
         integers to vary for each event. These integers are saved and getters allow retrieval of the coefficient offset
         for comparison with the measured offset in text functions.
         """
-        max_num_spikes = 50 if num_recs == 1 else 15
-        self.max_num_spikes = max_num_spikes  # increase num samples if want to increase further
+        self.min_spikes = min_num_spikes
+        self.max_num_spikes = max_num_spikes # increase num samples if want to increase further
         self.rise_samples = 100
         self.samples_from_start_to_peak = 100 - 1
+
         super().__init__(num_recs, num_samples, time_stop)
 
         self.event_type = event_type
@@ -899,9 +911,9 @@ class TestArtificialEventData(EventAndSpikesMaster):
     def num_events(self, rec=None):
 
         if rec is None:
-            event_times = self.peak_times["cumulative"][~np.isnan(self.peak_times["cumulative"])]
+            event_times = self.peak_times[self.time_type][~np.isnan(self.peak_times[self.time_type])]
         else:
-            event_times = self.peak_times["cumulative"][rec][~np.isnan(self.peak_times["cumulative"][rec])]
+            event_times = self.peak_times[self.time_type][rec][~np.isnan(self.peak_times[self.time_type][rec])]
 
         return event_times.size
 
@@ -974,8 +986,8 @@ class TestArtificialRiData(GenerateArtificialData):
     """
 
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, num_recs=75):
+        super().__init__(num_recs)
 
         self.sag_hump_amplitude = 10
         self.sag_hump_idx = int(np.floor((((self.num_samples / self.time_stop)*self.stop_time) - (self.num_samples / self.time_stop)*self.start_time))/2)
@@ -1019,8 +1031,8 @@ class TestArtificialRiData(GenerateArtificialData):
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class TestDataTools(GenerateArtificialData):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, num_recs):
+        super().__init__(num_recs)
 
         self.n_freqs = utils.np_empty_nan((self.num_recs, 1))
         self.hz_to_add = []

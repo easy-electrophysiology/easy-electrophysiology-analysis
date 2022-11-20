@@ -1414,9 +1414,13 @@ def make_event_info_dict():
                   "biexp_fit": {"b0": None, "b1": None, "rise_ms": None, "decay_ms": None,
                                 "fit_time": None, "fit_im": None, "r2": None},
 
-                  "decay_perc": {"time": None, "im": None, "idx": None, "decay_time_ms": None},
-                  "half_width": {"rise_midtime": None, "rise_mid_im": None, "decay_midtime": None,
-                                 "decay_mid_im": None, "fwhm_ms": None},
+                  "decay_perc": {"time": None, "im": None, "decay_time_ms": None,
+                                 "smoothed_decay_time": None, "smoothed_decay_im": None},
+
+                  "half_width": {"rise_midtime": None, "rise_mid_im": None,
+                                 "decay_midtime": None, "decay_mid_im": None, "fwhm_ms": None,
+                                 "rise_mid_idx":None, "decay_mid_idx": None},
+
                   "record_num": {"rec_idx": None},
 
                   "area_under_curve": {"im": None, "event_data": None, "baseline_period": None, "time_array": None},  # note baseline_period and time_array are only used for curve fitting and event average kinetics plotting
