@@ -1,23 +1,27 @@
-from PySide2 import QtWidgets, QtCore, QtGui
-from PySide2 import QtTest
-from PySide2.QtTest import QTest
+from PySide6 import QtWidgets, QtCore, QtGui
+from PySide6 import QtTest
+from PySide6.QtTest import QTest
 import pytest
 import sys
 import os
 import numpy as np
 import copy
+
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
 sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), "easy_electrophysiology"))
-from easy_electrophysiology.easy_electrophysiology.easy_electrophysiology import MainWindow
+from easy_electrophysiology.mainwindow.mainwindow import (
+    MainWindow,
+)
 from ephys_data_methods import current_calc, core_analysis_methods
 from utils import utils
 import utils_for_testing as test_utils
 from setup_test_suite import GuiTestSetup
 from slow_vs_fast_settings import get_settings
-from PySide2.QtCore import Signal
+from PySide6.QtCore import Signal
+
 keyClicks = QTest.keyClicks
-os.environ["PYTEST_QT_API"] = "pyside2"
+os.environ["PYTEST_QT_API"] = "PySide6"
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Test Class
@@ -25,11 +29,17 @@ os.environ["PYTEST_QT_API"] = "pyside2"
 
 SPEED = "fast"
 
+
 class TestSpikeCountGui:
     """
     Test all AP Counting analysis through the GUI
     """
-    @pytest.fixture(scope="function", params=["normalised", "cumulative"], ids=["normalised", "cumulative"])
+
+    @pytest.fixture(
+        scope="function",
+        params=["normalised", "cumulative"],
+        ids=["normalised", "cumulative"],
+    )
     def tgui(test, request):
         tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
@@ -40,9 +50,9 @@ class TestSpikeCountGui:
         yield tgui
         tgui.shutdown()
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Helper Methods
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Helper Methods
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
     def get_spiketimes_from_qtable(tgui, rec_from, rec_to, filenum):
@@ -50,7 +60,9 @@ class TestSpikeCountGui:
         tgui.switch_checkbox(tgui.mw.mw.show_all_spiketimes_checkbox, on=True)
         table_data = utils.np_empty_nan((tgui.adata.num_recs, tgui.adata.max_num_spikes))
 
-        start_col = tgui.mw.mw.table_tab_tablewidget.findItems(" Spike 1:    ", QtGui.Qt.MatchExactly)[-1].column()  # must get the last entry dynamically as each file can have different number of spikes
+        start_col = tgui.mw.mw.table_tab_tablewidget.findItems(" Spike 1:    ", QtGui.Qt.MatchExactly)[
+            -1
+        ].column()  # must get the last entry dynamically as each file can have different number of spikes
 
         for tab_idx, rec in enumerate(range(rec_from, rec_to)):
             row_table_data = []
@@ -69,14 +81,14 @@ class TestSpikeCountGui:
         """
         Blank out Vm for first records to artificially create a rheobase (so first spike is not always rec 1)
         """
-        tgui.mw.loaded_file.data.vm_array[0:test_rheobase_rec] = np.zeros((test_rheobase_rec - 0,
-                                                                           tgui.adata.num_samples))
+        tgui.mw.loaded_file.data.vm_array[0:test_rheobase_rec] = np.zeros(
+            (test_rheobase_rec - 0, tgui.adata.num_samples)
+        )
         tgui.mw.loaded_file.init_analysis_results_tables()
 
     @staticmethod
     def get_first_spikes_within_bounds(tgui, bounds_vm):
-        """
-        """
+        """ """
         num_recs = tgui.mw.loaded_file.data.num_recs
 
         start_times = np.array(bounds_vm["exp"][0])
@@ -97,8 +109,8 @@ class TestSpikeCountGui:
 
         return first_spikes_in_bounds
 
-# Rheobase Helpers
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Rheobase Helpers
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
     def overwrite_artificial_im_array_with_ramp_protocol(tgui):
@@ -112,37 +124,18 @@ class TestSpikeCountGui:
         return im_array
 
     @staticmethod
-    def setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs):
-        """
-        """
-        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False,
-                                                       im_groupbox_on=True,
-                                                       im_setting="user_input_im")
-        __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
-        num_recs = rec_to - rec_from + 1
-
-        tgui.left_mouse_click(tgui.mw.mw.spkcnt_set_im_button)
-        tgui.mw.dialogs["user_im_entry"].dia.user_input_im_tabwidget.setCurrentIndex(1)
-        table = tgui.mw.dialogs["user_im_entry"].dia.ramp_table
-
-        min_time = tgui.adata.min_max_time[0][0]
-        max_time = tgui.adata.min_max_time[0][1]
-
-        table.setItem(0, 0, QtWidgets.QTableWidgetItem(str(min_time)))
-        table.setItem(0, 1, QtWidgets.QTableWidgetItem("-100"))
-        table.setItem(0, 2, QtWidgets.QTableWidgetItem(str(max_time)))
-        table.setItem(0, 3, QtWidgets.QTableWidgetItem("-90"))
-
-        return num_recs, table, rec_from, rec_to
-
-    @staticmethod
     def fill_im_protocol_with_default_ramp_step(tgui, accept=False):
-        """
-        """
+        """ """
         step = 10
-        tgui.switch_groupbox(tgui.mw.dialogs["user_im_entry"].dia.step_ramp_start_stop_im_groupbox, on=True)
+        tgui.switch_groupbox(
+            tgui.mw.dialogs["user_im_entry"].dia.step_ramp_start_stop_im_groupbox,
+            on=True,
+        )
         tgui.mw.dialogs["user_im_entry"].dia.step_ramp_start_stop_im_spinbox.clear()
-        keyClicks(tgui.mw.dialogs["user_im_entry"].dia.step_ramp_start_stop_im_spinbox, str(step))
+        keyClicks(
+            tgui.mw.dialogs["user_im_entry"].dia.step_ramp_start_stop_im_spinbox,
+            str(step),
+        )
         tgui.left_mouse_click(tgui.mw.dialogs["user_im_entry"].dia.fill_protocol_button)
 
         if accept:
@@ -153,59 +146,72 @@ class TestSpikeCountGui:
 
     @staticmethod
     def get_rheobase_accounting_for_different_bounds_per_rec(tgui, rec, bounds_im):
-        """
-        """
-        results = {"exp": None,
-                   "bl": None}
+        """ """
+        results = {"exp": None, "bl": None}
 
         for key in ["exp", "bl"]:
             start_time = bounds_im[key][0][rec] - tgui.mw.loaded_file.data.min_max_time[rec][0]
             stop_time = bounds_im[key][1][rec] - tgui.mw.loaded_file.data.min_max_time[rec][0]  # FIX NAMING WRONG !?
 
-            start_idx = current_calc.convert_time_to_samples(timepoint=start_time,
-                                                             start_or_stop="start",
-                                                             time_array=tgui.adata.time_array,
-                                                             min_max_time=tgui.adata.min_max_time,
-                                                             base_rec=rec,
-                                                             add_offset_back=True)
+            start_idx = current_calc.convert_time_to_samples(
+                timepoint=start_time,
+                start_or_stop="start",
+                time_array=tgui.adata.time_array,
+                min_max_time=tgui.adata.min_max_time,
+                base_rec=rec,
+                add_offset_back=True,
+            )
 
-            stop_idx = current_calc.convert_time_to_samples(timepoint=stop_time,
-                                                            start_or_stop="stop",
-                                                            time_array=tgui.adata.time_array,
-                                                            min_max_time=tgui.adata.min_max_time,
-                                                            base_rec=rec,
-                                                            add_offset_back=True)
+            stop_idx = current_calc.convert_time_to_samples(
+                timepoint=stop_time,
+                start_or_stop="stop",
+                time_array=tgui.adata.time_array,
+                min_max_time=tgui.adata.min_max_time,
+                base_rec=rec,
+                add_offset_back=True,
+            )
 
-            results[key] = np.mean(tgui.adata.im_array[rec][start_idx:stop_idx + 1])
+            results[key] = np.mean(tgui.adata.im_array[rec][start_idx : stop_idx + 1])
 
         im_injection_between_bounds_at_rec = results["exp"] - results["bl"]
 
         return im_injection_between_bounds_at_rec
 
     @staticmethod
-    def find_true_rheobase_and_exact_im(tgui, im_ramp_array, test_rheobase_rec, bounds_im=False, provide_baselines_instead_or_measure_from_data=False):
+    def find_true_rheobase_and_exact_im(
+        tgui,
+        im_ramp_array,
+        test_rheobase_rec,
+        bounds_im=False,
+        provide_baselines_instead_or_measure_from_data=False,
+    ):
         """
         find true rheobase and exact im and test
         """
-        rheobase_spike_idx = int(tgui.adata.spike_sample_idx[test_rheobase_rec][0] + tgui.adata.samples_from_start_to_peak)
+        rheobase_spike_idx = int(
+            tgui.adata.spike_sample_idx[test_rheobase_rec][0] + tgui.adata.samples_from_start_to_peak
+        )
 
         if provide_baselines_instead_or_measure_from_data is False:
+            bl_upper = current_calc.convert_time_to_samples(
+                timepoint=bounds_im["bl"][0][test_rheobase_rec],
+                start_or_stop="start",
+                time_array=tgui.adata.time_array,
+                min_max_time=tgui.adata.min_max_time,
+                base_rec=test_rheobase_rec,
+                add_offset_back=False,
+            )
 
-            bl_upper = current_calc.convert_time_to_samples(timepoint=bounds_im["bl"][0][test_rheobase_rec],
-                                                            start_or_stop="start",
-                                                            time_array=tgui.adata.time_array,
-                                                            min_max_time=tgui.adata.min_max_time,
-                                                            base_rec=test_rheobase_rec,
-                                                            add_offset_back=False)
+            bl_lower = current_calc.convert_time_to_samples(
+                timepoint=bounds_im["bl"][1][test_rheobase_rec],
+                start_or_stop="stop",
+                time_array=tgui.adata.time_array,
+                min_max_time=tgui.adata.min_max_time,
+                base_rec=test_rheobase_rec,
+                add_offset_back=False,
+            )
 
-            bl_lower = current_calc.convert_time_to_samples(timepoint=bounds_im["bl"][1][test_rheobase_rec],
-                                                            start_or_stop="stop",
-                                                            time_array=tgui.adata.time_array,
-                                                            min_max_time=tgui.adata.min_max_time,
-                                                            base_rec=test_rheobase_rec,
-                                                            add_offset_back=False)
-
-            baseline = np.mean(im_ramp_array[test_rheobase_rec][bl_upper:bl_lower + 1])
+            baseline = np.mean(im_ramp_array[test_rheobase_rec][bl_upper : bl_lower + 1])
 
         else:
             baseline = provide_baselines_instead_or_measure_from_data[test_rheobase_rec]
@@ -215,22 +221,29 @@ class TestSpikeCountGui:
         return test_rheobase
 
     def check_rheobase(self, tgui, num_recs, rec_from, rec_to, test_rheobase_rec, filenum=0):
-
         baselines = np.zeros((num_recs, 1))
         saved_data = tgui.mw.loaded_file.saved_rheobase_settings["im_array"]
-        test_rheobase = self.find_true_rheobase_and_exact_im(tgui, saved_data, test_rheobase_rec,
-                                                             provide_baselines_instead_or_measure_from_data=baselines)
-        assert tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase"] == test_rheobase, "stored table data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                       test_rheobase[0]), "table rheobase is incorrect after ramp user Im protocol"
+        test_rheobase = self.find_true_rheobase_and_exact_im(
+            tgui,
+            saved_data,
+            test_rheobase_rec,
+            provide_baselines_instead_or_measure_from_data=baselines,
+        )
+        assert (
+            tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase
+        ), "model data rheobase is incorrect after ramp user Im protocol"
+        assert (
+            tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase"] == test_rheobase
+        ), "stored table data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.eq(
+            tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0], test_rheobase[0]
+        ), "table rheobase is incorrect after ramp user Im protocol"
 
-# Other Parameter Test Utils
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Other Parameter Test Utils
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
     def check_fs_latency(tgui, rec_from, rec_to, filenum=0, first_spikes=None):
-
         if not np.any(first_spikes):
             first_spikes = tgui.adata.peak_times[tgui.time_type][:, 0]
 
@@ -240,34 +253,33 @@ class TestSpikeCountGui:
         test_fs_latency_ms = test_fs_latency * 1000
         test_fs_latency_ms[rec_from:rec_to][np.isnan(test_fs_latency_ms[rec_from:rec_to])] = 0
 
-        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["fs_latency_ms"],
-                              test_fs_latency_ms,
-                              1e-10)
-        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[filenum]["fs_latency_ms"],
-                              test_fs_latency_ms,
-                              1e-10)
-        assert utils.allclose(tgui.get_data_from_qtable("fs_latency_ms", rec_from, rec_to),
-                              tgui.clean(test_fs_latency_ms),
-                              1e-10)
+        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["fs_latency_ms"], test_fs_latency_ms, 1e-10)
+        assert utils.allclose(
+            tgui.mw.stored_tabledata.spkcnt_data[filenum]["fs_latency_ms"],
+            test_fs_latency_ms,
+            1e-10,
+        )
+        assert utils.allclose(
+            tgui.get_data_from_qtable("fs_latency_ms", rec_from, rec_to),
+            tgui.clean(test_fs_latency_ms),
+            1e-10,
+        )
 
     @staticmethod
     def remove_spike_from_adata(tgui, rec, spike_idx, adata_array):
-        """
-        """
+        """ """
         adata_array[rec][spike_idx] = np.nan
 
         cleaned_peak_data = tgui.clean(adata_array[rec])
         new_peak_times = utils.np_empty_nan(tgui.adata.max_num_spikes)
 
-        new_peak_times[0:len(cleaned_peak_data)] = cleaned_peak_data
+        new_peak_times[0 : len(cleaned_peak_data)] = cleaned_peak_data
         adata_array[rec, :] = new_peak_times
 
     def calculate_fa(self, tgui, spike_times, rec_from, rec_to, method):
-        """
-        """
+        """ """
         test_fa_divisor = []
         for rec in range(rec_from, rec_to + 1):
-
             clean_row = tgui.clean(spike_times[rec])
 
             if len(clean_row) <= 2:
@@ -288,8 +300,7 @@ class TestSpikeCountGui:
 
     @staticmethod
     def calculate_test_divisor_method(data):
-        """
-        """
+        """ """
         if len(data) > 1:
             divisor_method = (data[1] - data[0]) / (data[-1] - data[-2])
         else:
@@ -315,24 +326,36 @@ class TestSpikeCountGui:
 
         return local_variance
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Tests
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Tests
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("spike_detection_method", ["auto_record", "auto_spike", "manual"])
-    def test_spikecount_model_data_all_spike_detection_methods(self, tgui, analyse_specific_recs, spike_detection_method):
+    def test_spikecount_model_data_all_spike_detection_methods(
+        self, tgui, analyse_specific_recs, spike_detection_method
+    ):
         """
         For these tests, only the default spike detection method is tested Auto. Threshold Record.
         """
-        test_spike_counts, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs, tgui.adata.spikes_per_rec)
+        test_spike_counts, rec_from, rec_to = tgui.handle_analyse_specific_recs(
+            analyse_specific_recs, tgui.adata.spikes_per_rec
+        )
         tgui.run_spikecount_analysis(spike_detection_method=spike_detection_method)
 
-        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data["num_spikes"],
-                       test_spike_counts), "Check Model Spike Number: " + spike_detection_method
-        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0]["num_spikes"],
-                       test_spike_counts), "Check Stored Tabledata Spike Number: " + spike_detection_method
-        assert tgui.eq(tgui.get_data_from_qtable("num_spikes", rec_from, rec_to), tgui.clean(test_spike_counts)), "Check QTable Spike Number " + spike_detection_method
+        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data["num_spikes"], test_spike_counts), (
+            "Check Model Spike Number: " + spike_detection_method
+        )
+
+        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0]["num_spikes"], test_spike_counts), (
+            "Check Stored Tabledata Spike Number: " + spike_detection_method
+        )
+        assert tgui.eq(
+            tgui.get_data_from_qtable("num_spikes", rec_from, rec_to),
+            tgui.clean(test_spike_counts),
+        ), (
+            "Check QTable Spike Number " + spike_detection_method
+        )
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_current_calc_spike_info(self, tgui, analyse_specific_recs):
@@ -343,19 +366,22 @@ class TestSpikeCountGui:
                        3) spike times found in the qtable
         """
         for filenum in range(3):
-
             __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
             tgui.run_spikecount_analysis()
 
-            test_spike_times = tgui.set_out_of_rec_to_nan(rec_from, rec_to,
-                                                          array_size=(tgui.adata.num_recs,
-                                                                      tgui.adata.max_num_spikes),
-                                                          data=tgui.adata.peak_times_)
+            test_spike_times = tgui.set_out_of_rec_to_nan(
+                rec_from,
+                rec_to,
+                array_size=(tgui.adata.num_recs, tgui.adata.max_num_spikes),
+                data=tgui.adata.peak_times_,
+            )
 
             spike_times = test_utils.get_spike_times_from_spike_info(tgui.adata, tgui.mw.loaded_file.spkcnt_spike_info)
             tgui.check_spiketimes(tgui, spike_times, test_spike_times, "model spiketimes")
 
-            tabledata_spike_times = test_utils.get_spike_times_from_spike_info(tgui.adata, tgui.mw.stored_tabledata.spkcnt_spike_info[filenum])
+            tabledata_spike_times = test_utils.get_spike_times_from_spike_info(
+                tgui.adata, tgui.mw.stored_tabledata.spkcnt_spike_info[filenum]
+            )
             tgui.check_spiketimes(tgui, tabledata_spike_times, test_spike_times, "stored data spiketimes")
 
             table_data = self.get_spiketimes_from_qtable(tgui, rec_from, rec_to, filenum)
@@ -373,97 +399,123 @@ class TestSpikeCountGui:
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
 
         tgui.run_spikecount_analysis()
-        spike_idx = test_utils.get_spike_times_from_spike_info(tgui.adata, tgui.mw.loaded_file.spkcnt_spike_info, param_type="idx")
-        assert tgui.eq(spike_idx[rec_from:rec_to],
-                       tgui.adata.spike_peak_idx[rec_from:rec_to])
+        spike_idx = test_utils.get_spike_times_from_spike_info(
+            tgui.adata, tgui.mw.loaded_file.spkcnt_spike_info, param_type="idx"
+        )
+        assert tgui.eq(spike_idx[rec_from:rec_to], tgui.adata.spike_peak_idx[rec_from:rec_to])
 
-        tabledata_spike_idx = test_utils.get_spike_times_from_spike_info(tgui.adata,
-                                                                         tgui.mw.stored_tabledata.spkcnt_spike_info[0],
-                                                                         param_type="idx")
-        assert tgui.eq(tabledata_spike_idx[rec_from:rec_to],
-                       tgui.adata.spike_peak_idx[rec_from:rec_to])
+        tabledata_spike_idx = test_utils.get_spike_times_from_spike_info(
+            tgui.adata, tgui.mw.stored_tabledata.spkcnt_spike_info[0], param_type="idx"
+        )
+        assert tgui.eq(
+            tabledata_spike_idx[rec_from:rec_to],
+            tgui.adata.spike_peak_idx[rec_from:rec_to],
+        )
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_spkcnt_counted_recs(self, tgui, analyse_specific_recs):
-
         test_counted_recs = np.array([rec for rec in range(1, tgui.adata.num_recs + 1)])
-        test_counted_recs, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs, test_counted_recs)
+        test_counted_recs, rec_from, rec_to = tgui.handle_analyse_specific_recs(
+            analyse_specific_recs, test_counted_recs
+        )
         tgui.run_spikecount_analysis()
 
-        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data["record_num"],
-                       test_counted_recs), "Check Model Spike Counted Recs"
-        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0]["record_num"],
-                       test_counted_recs), "Check Stored Tableddata Counted Recs"
-        assert tgui.eq(tgui.get_data_from_qtable("record_num", rec_from, rec_to),
-                       tgui.clean(test_counted_recs)), "Check QTable Spike Number"
+        assert tgui.eq(
+            tgui.mw.loaded_file.spkcnt_data["record_num"], test_counted_recs
+        ), "Check Model Spike Counted Recs"
+        assert tgui.eq(
+            tgui.mw.stored_tabledata.spkcnt_data[0]["record_num"], test_counted_recs
+        ), "Check Stored Tableddata Counted Recs"
+        assert tgui.eq(
+            tgui.get_data_from_qtable("record_num", rec_from, rec_to),
+            tgui.clean(test_counted_recs),
+        ), "Check QTable Spike Number"
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("align_bounds_across_recs", [True, False])
     def test_current_calc_model_data_with_bounds(self, tgui, analyse_specific_recs, align_bounds_across_recs):
-
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
 
         bounds_vm = tgui.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs)
 
-        tgui.run_spikecount_analysis(["bounds"],  # need to set bounds before they are moved
-                                     bounds_vm=bounds_vm),
+        tgui.run_spikecount_analysis(["bounds"], bounds_vm=bounds_vm),  # need to set bounds before they are moved
 
-        spike_info_test_model, spike_count_test_model = tgui.adata.subtract_results_from_data(tgui.adata,
-                                                                                              tgui.mw.loaded_file.spkcnt_spike_info,
-                                                                                              tgui.mw.loaded_file.spkcnt_data["num_spikes"],
-                                                                                              rec_from, rec_to,
-                                                                                              tgui.time_type,
-                                                                                              bounds=[bounds_vm["exp"][0] - tgui.mw.loaded_file.data.min_max_time[:, 0],  # format required for function to align with test_spikecalc
-                                                                                                      bounds_vm["exp"][1] - tgui.mw.loaded_file.data.min_max_time[:, 0]])
+        (
+            spike_info_test_model,
+            spike_count_test_model,
+        ) = tgui.adata.subtract_results_from_data(
+            tgui.adata,
+            tgui.mw.loaded_file.spkcnt_spike_info,
+            tgui.mw.loaded_file.spkcnt_data["num_spikes"],
+            rec_from,
+            rec_to,
+            tgui.time_type,
+            bounds=[
+                bounds_vm["exp"][0]
+                - tgui.mw.loaded_file.data.min_max_time[
+                    :, 0
+                ],  # format required for function to align with test_spikecalc
+                bounds_vm["exp"][1] - tgui.mw.loaded_file.data.min_max_time[:, 0],
+            ],
+        )
         assert spike_info_test_model
         assert spike_count_test_model
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("align_bounds_across_recs", [True, False])
     def test_current_calc_tabledata_and_table_with_bounds(self, tgui, analyse_specific_recs, align_bounds_across_recs):
-
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
 
         bounds_vm = tgui.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs)
 
-        tgui.run_spikecount_analysis(["bounds"],
-                                     bounds_vm=bounds_vm)
+        tgui.run_spikecount_analysis(["bounds"], bounds_vm=bounds_vm)
 
-        spike_info_test_tabledata, spike_time_test_tabledata = tgui.adata.subtract_results_from_data(tgui.adata,
-                                                                                                     tgui.mw.stored_tabledata.spkcnt_spike_info[0],
-                                                                                                     tgui.mw.stored_tabledata.spkcnt_data[0]["num_spikes"],
-                                                                                                     rec_from, rec_to,
-                                                                                                     tgui.time_type,
-                                                                                                     [bounds_vm["exp"][0] - tgui.mw.loaded_file.data.min_max_time[:, 0],
-                                                                                                      bounds_vm["exp"][1] - tgui.mw.loaded_file.data.min_max_time[:, 0]])
+        (
+            spike_info_test_tabledata,
+            spike_time_test_tabledata,
+        ) = tgui.adata.subtract_results_from_data(
+            tgui.adata,
+            tgui.mw.stored_tabledata.spkcnt_spike_info[0],
+            tgui.mw.stored_tabledata.spkcnt_data[0]["num_spikes"],
+            rec_from,
+            rec_to,
+            tgui.time_type,
+            [
+                bounds_vm["exp"][0] - tgui.mw.loaded_file.data.min_max_time[:, 0],
+                bounds_vm["exp"][1] - tgui.mw.loaded_file.data.min_max_time[:, 0],
+            ],
+        )
 
         assert spike_info_test_tabledata
         assert spike_time_test_tabledata
-        assert tgui.eq(tgui.get_data_from_qtable("num_spikes", rec_from, rec_to),
-                       tgui.clean(tgui.mw.loaded_file.spkcnt_data["num_spikes"])), "Check QTable Spike Number"
+        assert tgui.eq(
+            tgui.get_data_from_qtable("num_spikes", rec_from, rec_to),
+            tgui.clean(tgui.mw.loaded_file.spkcnt_data["num_spikes"]),
+        ), "Check QTable Spike Number"
 
     def test_current_calc_plotgraphs_time(self, tgui):
-
         tgui.run_spikecount_analysis()
         for rec in range(0, tgui.adata.num_recs):
             test_rec_peak_times = tgui.adata.peak_times[tgui.time_type][rec]
-            assert tgui.eq(tgui.mw.loaded_file_plot.spkcnt_plot.xData,
-                           tgui.clean(test_rec_peak_times))
+            assert tgui.eq(
+                tgui.mw.loaded_file_plot.spkcnt_plot.xData,
+                tgui.clean(test_rec_peak_times),
+            )
             tgui.left_mouse_click(tgui.mw.mw.current_rec_rightbutton)
 
     def test_current_calc_plotgraphs_amplitudes(self, tgui):
         tgui.run_spikecount_analysis()
-        test_ampltudes = test_utils.get_spike_times_from_spike_info(tgui.adata, tgui.mw.loaded_file.spkcnt_spike_info,
-                                                                    param_type="amplitude")
+        test_ampltudes = test_utils.get_spike_times_from_spike_info(
+            tgui.adata, tgui.mw.loaded_file.spkcnt_spike_info, param_type="amplitude"
+        )
         for rec in range(0, tgui.adata.num_recs):
             rec_amplitudes = test_ampltudes[rec]
-            assert tgui.eq(tgui.mw.loaded_file_plot.spkcnt_plot.yData,
-                           tgui.clean(rec_amplitudes))
+            assert tgui.eq(tgui.mw.loaded_file_plot.spkcnt_plot.yData, tgui.clean(rec_amplitudes))
             tgui.left_mouse_click(tgui.mw.mw.current_rec_rightbutton)
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Test Spikecount Params
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Test Spikecount Params
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("align_bounds_across_recs", ["no_bounds", True, False])
@@ -473,7 +525,6 @@ class TestSpikeCountGui:
         the recs_to from 50 to 12.
         """
         for filenum in range(3):
-
             __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
 
             if align_bounds_across_recs == "no_bounds":
@@ -481,8 +532,7 @@ class TestSpikeCountGui:
                 first_spikes = tgui.adata.peak_times[tgui.time_type][:, 0]
             else:
                 bounds_vm = tgui.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs)
-                tgui.run_spikecount_analysis(["fs_latency_ms", "bounds"],
-                                             bounds_vm=bounds_vm)
+                tgui.run_spikecount_analysis(["fs_latency_ms", "bounds"], bounds_vm=bounds_vm)
                 first_spikes = self.get_first_spikes_within_bounds(tgui, bounds_vm)
 
             self.check_fs_latency(tgui, rec_from, rec_to, filenum, first_spikes)
@@ -493,25 +543,27 @@ class TestSpikeCountGui:
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_mean_isi(self, tgui, analyse_specific_recs):
-
         for filenum in range(3):
-
-            _, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs, tgui.adata.peak_times["normalised"][:, 0])
+            _, rec_from, rec_to = tgui.handle_analyse_specific_recs(
+                analyse_specific_recs, tgui.adata.peak_times["normalised"][:, 0]
+            )
 
             tgui.run_spikecount_analysis(["mean_isi_ms"])
             test_mean_isi_ms = tgui.calculate_mean_isi()
             test_mean_isi_ms = tgui.process_test_data_for_analyse_recs(test_mean_isi_ms, rec_from, rec_to)
 
-            assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["mean_isi_ms"],
-                                  test_mean_isi_ms,
-                                  1e-10), "model"
+            assert utils.allclose(tgui.mw.loaded_file.spkcnt_data["mean_isi_ms"], test_mean_isi_ms, 1e-10), "model"
 
-            assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[filenum]["mean_isi_ms"],
-                                  test_mean_isi_ms,
-                                  1e-10), "tabledata"
-            assert utils.allclose(tgui.get_data_from_qtable("mean_isi_ms", rec_from, rec_to),
-                                  tgui.clean(test_mean_isi_ms),
-                                  1e-10), "qtable"
+            assert utils.allclose(
+                tgui.mw.stored_tabledata.spkcnt_data[filenum]["mean_isi_ms"],
+                test_mean_isi_ms,
+                1e-10,
+            ), "tabledata"
+            assert utils.allclose(
+                tgui.get_data_from_qtable("mean_isi_ms", rec_from, rec_to),
+                tgui.clean(test_mean_isi_ms),
+                1e-10,
+            ), "qtable"
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
             tgui.setup_artificial_data(tgui.time_type, "spkcnt")
@@ -528,44 +580,69 @@ class TestSpikeCountGui:
         """
         tgui.set_link_across_recs(tgui, mode)
 
-        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False,
-                                                       im_setting="bounds",
-                                                       im_groupbox_on=True)
+        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False, im_setting="bounds", im_groupbox_on=True)
         for filenum in range(2):
-
             # Get and set every region randomly across all recs. Get the bounds first otherwise
             # the boundary region will not exist but will try to be moved and create problems in the test environment
-            tgui.set_recs_to_analyse_spinboxes_checked(on=False)  # we need to turn this off for assign_random_boundary_position_for_every_rec_and_test() to work
-            all_start_stop_times = tgui.assign_random_boundary_position_for_every_rec_and_test(tgui,
-                                                                                               tgui.mw.spkcnt_bounds,
-                                                                                               mode)
+            tgui.set_recs_to_analyse_spinboxes_checked(
+                on=False
+            )  # we need to turn this off for assign_random_boundary_position_for_every_rec_and_test() to work
+            all_start_stop_times = tgui.assign_random_boundary_position_for_every_rec_and_test(
+                tgui, tgui.mw.spkcnt_bounds, mode
+            )
             _, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
             tgui.left_mouse_click(tgui.mw.mw.spike_count_button)
 
             # Convert all boundary times to sample index
-            all_start_stop_times = tgui.convert_random_boundary_positions_from_time_to_samples(tgui,
-                                                                                               all_start_stop_times)
+            all_start_stop_times = tgui.convert_random_boundary_positions_from_time_to_samples(
+                tgui, all_start_stop_times
+            )
 
             # Convert the times to indicies and index out the relevant data. Calculate additional params
             # from this indexed data (deta im / vm and input resistance)
-            test_results, test_delta_im_pa, __, __ = tgui.calculate_test_measures_from_boundary_start_stop_indicies(all_start_stop_times,
-                                                                                                                    ["lower_bl_lr", "lower_exp_lr"],
-                                                                                                                    ["im_baseline", "im_steady_state"],
-                                                                                                                    rec_from, rec_to)
+            (
+                test_results,
+                test_delta_im_pa,
+                __,
+                __,
+            ) = tgui.calculate_test_measures_from_boundary_start_stop_indicies(
+                all_start_stop_times,
+                ["lower_bl_lr", "lower_exp_lr"],
+                ["im_baseline", "im_steady_state"],
+                rec_from,
+                rec_to,
+            )
 
             # Test they match for Loaded File, Stored Tabledata and the analysis results table
-            for test_dataset in [tgui.mw.loaded_file.spkcnt_data, tgui.mw.stored_tabledata.spkcnt_data[filenum]]:
-                assert np.array_equal(test_dataset["im_baseline"], test_results["im_baseline"], equal_nan=True)
-                assert np.array_equal(test_dataset["im_steady_state"], test_results["im_steady_state"], equal_nan=True)
+            for test_dataset in [
+                tgui.mw.loaded_file.spkcnt_data,
+                tgui.mw.stored_tabledata.spkcnt_data[filenum],
+            ]:
+                assert np.array_equal(
+                    test_dataset["im_baseline"],
+                    test_results["im_baseline"],
+                    equal_nan=True,
+                )
+                assert np.array_equal(
+                    test_dataset["im_steady_state"],
+                    test_results["im_steady_state"],
+                    equal_nan=True,
+                )
                 assert np.array_equal(test_dataset["im_delta"], test_delta_im_pa, equal_nan=True)
 
             # this always gets the last file on the table
-            assert np.array_equal(tgui.get_data_from_qtable("im_baseline", rec_from, rec_to, analysis_type="Ri"),
-                                  test_results["im_baseline"][rec_from:rec_to + 1])
-            assert np.array_equal(tgui.get_data_from_qtable("im_steady_state", rec_from, rec_to, analysis_type="Ri"),
-                                  test_results["im_steady_state"][rec_from:rec_to + 1])
-            assert np.array_equal(tgui.get_data_from_qtable("im_delta", rec_from, rec_to, analysis_type="Ri"),
-                                  test_delta_im_pa[rec_from:rec_to + 1])
+            assert np.array_equal(
+                tgui.get_data_from_qtable("im_baseline", rec_from, rec_to, analysis_type="Ri"),
+                test_results["im_baseline"][rec_from : rec_to + 1],
+            )
+            assert np.array_equal(
+                tgui.get_data_from_qtable("im_steady_state", rec_from, rec_to, analysis_type="Ri"),
+                test_results["im_steady_state"][rec_from : rec_to + 1],
+            )
+            assert np.array_equal(
+                tgui.get_data_from_qtable("im_delta", rec_from, rec_to, analysis_type="Ri"),
+                test_delta_im_pa[rec_from : rec_to + 1],
+            )
 
             # load a new file
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
@@ -573,11 +650,12 @@ class TestSpikeCountGui:
         tgui.shutdown()
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
-    @pytest.mark.parametrize("im_analysis_type",  ["bounds_align_recs", "bounds_not_align_recs", "im_protocol"])
-    def test_rheobase(self,  tgui, im_analysis_type, analyse_specific_recs):
-
+    @pytest.mark.parametrize(
+        "im_analysis_type",
+        ["bounds_align_recs", "bounds_not_align_recs", "im_protocol"],
+    )
+    def test_rheobase(self, tgui, im_analysis_type, analyse_specific_recs):
         for filenum in range(3):
-
             if "bounds" in im_analysis_type:
                 im_setting = "bounds"
                 align_bounds_across_recs = True if im_analysis_type == "bounds_align_recs" else False
@@ -586,32 +664,42 @@ class TestSpikeCountGui:
                 im_setting = "im_protocol"
                 bounds_im = {"start": 0.2, "stop": 0.8}
 
-            tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False,
-                                                           im_setting=im_setting,
-                                                           im_groupbox_on=True)
+            tgui.switch_to_spikecounts_and_set_im_combobox(
+                spike_bounds_on=False, im_setting=im_setting, im_groupbox_on=True
+            )
 
-            __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs,
-                                                                     tgui.adata.current_injection_amplitude)
-            __, test_rheobase_rec, test_rheobase = tgui.adata.generate_test_rheobase_data_from_spikeinfo(rec_from,
-                                                                                                         rec_to,
-                                                                                                         tgui.adata.spikes_per_rec,
-                                                                                                         change_spikeinfo=False)  #
+            __, rec_from, rec_to = tgui.handle_analyse_specific_recs(
+                analyse_specific_recs, tgui.adata.current_injection_amplitude
+            )
+            (
+                __,
+                test_rheobase_rec,
+                test_rheobase,
+            ) = tgui.adata.generate_test_rheobase_data_from_spikeinfo(
+                rec_from, rec_to, tgui.adata.spikes_per_rec, change_spikeinfo=False
+            )  #
             self.overwrite_modeldata_to_test_rheobase(tgui, test_rheobase_rec)
-            tgui.run_spikecount_analysis(["rheobase_record"],
-                                         im_setting=im_setting,
-                                         bounds_im=bounds_im)
+            tgui.run_spikecount_analysis(["rheobase_record"], im_setting=im_setting, bounds_im=bounds_im)
 
-            assert tgui.eq(tgui.mw.loaded_file.spkcnt_data.loc[0,"rheobase_rec"],
-                           test_rheobase_rec)
-            assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase_rec"],
-                           test_rheobase_rec)
+            assert tgui.eq(
+                tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase_rec"],
+                test_rheobase_rec,
+            )
+            assert tgui.eq(
+                tgui.mw.stored_tabledata.spkcnt_data[filenum].loc[0, "rheobase_rec"],
+                test_rheobase_rec,
+            )
 
             if im_analysis_type == "im_protocol":
-                assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                               tgui.adata.current_injection_amplitude[test_rheobase_rec])
+                assert tgui.eq(
+                    tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+                    tgui.adata.current_injection_amplitude[test_rheobase_rec],
+                )
             else:
-                assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                               self.get_rheobase_accounting_for_different_bounds_per_rec(tgui, test_rheobase_rec, bounds_im))
+                assert tgui.eq(
+                    tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+                    self.get_rheobase_accounting_for_different_bounds_per_rec(tgui, test_rheobase_rec, bounds_im),
+                )
 
             tgui.mw.mw.actionBatch_Mode_ON.trigger()
             tgui.setup_artificial_data(tgui.time_type, "spkcnt")
@@ -619,148 +707,199 @@ class TestSpikeCountGui:
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_user_im_input_rheobase(self, tgui, analyse_specific_recs):
-        """
-        """
-        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False,
-                                                       im_setting="user_input_im",
-                                                       im_groupbox_on=True)
+        """ """
+        tgui.switch_to_spikecounts_and_set_im_combobox(
+            spike_bounds_on=False, im_setting="user_input_im", im_groupbox_on=True
+        )
 
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
-        __, test_rheobase_rec, __ = tgui.adata.generate_test_rheobase_data_from_spikeinfo(rec_from,
-                                                                                          rec_to,
-                                                                                          tgui.adata.spikes_per_rec,
-                                                                                          change_spikeinfo=False)
+        (
+            __,
+            test_rheobase_rec,
+            __,
+        ) = tgui.adata.generate_test_rheobase_data_from_spikeinfo(
+            rec_from, rec_to, tgui.adata.spikes_per_rec, change_spikeinfo=False
+        )
 
         self.overwrite_modeldata_to_test_rheobase(tgui, test_rheobase_rec)
         rows_to_fill_in = rec_to - rec_from + 1
-        tgui.fill_user_im_input_widget(rows_to_fill_in,
-                                       tgui.mw.mw.spkcnt_set_im_button)
-        tgui.run_spikecount_analysis(["rheobase_record"],
-                                     im_setting="user_input_im")
+        tgui.fill_user_im_input_widget(rows_to_fill_in, tgui.mw.mw.spkcnt_set_im_button)
+        tgui.run_spikecount_analysis(["rheobase_record"], im_setting="user_input_im")
 
-        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data.loc[0,"rheobase_rec"],
-                       test_rheobase_rec)
-        assert tgui.eq(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0,"rheobase_rec"],
-                       test_rheobase_rec)
-        assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                       tgui.mw.cfgs.spkcnt["user_input_im"]["step"][test_rheobase_rec - rec_from][0])  # the user input Im is indexed from the rec_from
+        assert tgui.eq(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase_rec"], test_rheobase_rec)
+        assert tgui.eq(
+            tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase_rec"],
+            test_rheobase_rec,
+        )
+        assert tgui.eq(
+            tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+            tgui.mw.cfgs.spkcnt["user_input_im"]["step"][test_rheobase_rec - rec_from][0],
+        )  # the user input Im is indexed from the rec_from
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("align_bounds_across_recs", [True, False])
     def test_rheobase_exact(self, tgui, analyse_specific_recs, align_bounds_across_recs):
-        """
-        """
+        """ """
         bounds_im = tgui.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs)
-        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False,
-                                                       im_groupbox_on=True)
+        tgui.switch_to_spikecounts_and_set_im_combobox(spike_bounds_on=False, im_groupbox_on=True)
         im_ramp_array = self.overwrite_artificial_im_array_with_ramp_protocol(tgui)
 
         # zero out vm array to create a rheobase
-        __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs, tgui.adata.current_injection_amplitude)
-        __, test_rheobase_rec, __ = tgui.adata.generate_test_rheobase_data_from_spikeinfo(rec_from,
-                                                                                          rec_to,
-                                                                                          tgui.adata.spikes_per_rec,
-                                                                                          change_spikeinfo=False)
+        __, rec_from, rec_to = tgui.handle_analyse_specific_recs(
+            analyse_specific_recs, tgui.adata.current_injection_amplitude
+        )
+        (
+            __,
+            test_rheobase_rec,
+            __,
+        ) = tgui.adata.generate_test_rheobase_data_from_spikeinfo(
+            rec_from, rec_to, tgui.adata.spikes_per_rec, change_spikeinfo=False
+        )
         self.overwrite_modeldata_to_test_rheobase(tgui, test_rheobase_rec)
         tgui.run_spikecount_analysis(["rheobase_exact"], im_setting="bounds", bounds_im=bounds_im)
 
-        test_rheobase = self.find_true_rheobase_and_exact_im(tgui, im_ramp_array, test_rheobase_rec, bounds_im=bounds_im)
+        test_rheobase = self.find_true_rheobase_and_exact_im(
+            tgui, im_ramp_array, test_rheobase_rec, bounds_im=bounds_im
+        )
 
-        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"],
-                              test_rheobase,
-                              1e-10)
+        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"], test_rheobase, 1e-10)
 
-        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
-                              test_rheobase,
-                              1e-10)
-        assert utils.allclose(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                              test_rheobase,
-                              1e-10)
+        assert utils.allclose(
+            tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
+            test_rheobase,
+            1e-10,
+        )
+        assert utils.allclose(
+            tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+            test_rheobase,
+            1e-10,
+        )
 
     def test_rheobase_exact_1_rec(self, tgui):
         """v2.4.0 had a bug in which 1 rec rheobase analysis would crashs"""
         tgui.setup_artificial_data(tgui.time_type, "spkcnt_1_rec")
 
-        num_recs, __, rec_from, rec_to = self.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui,
-                                                                                              analyse_specific_recs=False)
+        (
+            num_recs,
+            __,
+            rec_from,
+            rec_to,
+        ) = tgui.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs=False)
         __ = self.fill_im_protocol_with_default_ramp_step(tgui, accept=True)
 
-        tgui.run_spikecount_analysis(["rheobase_exact"],
-                                     im_setting="user_input_im")
+        tgui.run_spikecount_analysis(["rheobase_exact"], im_setting="user_input_im")
 
         ramp = tgui.mw.loaded_file.make_im_protocol_from_user_input(
-                                                                    tgui.mw.cfgs.spkcnt["user_input_im"]["ramp"]["protocol"])
+            tgui.mw.cfgs.spkcnt["user_input_im"]["ramp"]["protocol"]
+        )
 
-        test_rheobase = ramp[0][tgui.adata.spike_peak_idx[0][0].astype('int')]
+        test_rheobase = ramp[0][tgui.adata.spike_peak_idx[0][0].astype("int")]
 
-        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"],
-                              test_rheobase,
-                              1e-10)
+        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"], test_rheobase, 1e-10)
 
-        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
-                              test_rheobase,
-                              1e-10)
-        assert utils.allclose(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
-                              test_rheobase,
-                              1e-10)
+        assert utils.allclose(
+            tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"],
+            test_rheobase,
+            1e-10,
+        )
+        assert utils.allclose(
+            tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0],
+            test_rheobase,
+            1e-10,
+        )
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     @pytest.mark.parametrize("fill_without_auto_ramping", [True, False])
     def test_user_ramp_protocol_generation(self, tgui, analyse_specific_recs, fill_without_auto_ramping):
-        """
-        """
-        num_recs, table, __, __ = self.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs)
+        """ """
+        num_recs, table, __, __ = tgui.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs)
 
         data = table.dataframe_generation_from_table()
-        assert data.shape == (1, 4), "single record user-ramp protocol is not input correctly"
+        assert data.shape == (
+            1,
+            4,
+        ), "single record user-ramp protocol is not input correctly"
 
         if fill_without_auto_ramping:
             tgui.left_mouse_click(tgui.mw.dialogs["user_im_entry"].dia.fill_protocol_button)
             data = table.dataframe_generation_from_table()
-            assert data.shape == (num_recs, 4), "num recs does not match without auto ramping"
+            assert data.shape == (
+                num_recs,
+                4,
+            ), "num recs does not match without auto ramping"
             for col in range(4):
                 assert np.unique(data[:, col]).size == 1, "filled protocol columns are not all the same "
 
         else:
             default_step = self.fill_im_protocol_with_default_ramp_step(tgui)
             data = table.dataframe_generation_from_table()
-            assert data.shape == (num_recs, 4), "num recs does not match with auto ramping"
+            assert data.shape == (
+                num_recs,
+                4,
+            ), "num recs does not match with auto ramping"
             for col in [0, 2]:
-                assert np.unique(data[:, col]).size == 1, "filled baseline and time protocol for ramp Im are not the same"
-            assert np.mean(np.diff(data[:, 1])) == default_step, "filled ramp start Im protocol is not increasing exactly by 10"
-            assert np.mean(np.diff(data[:, 3])) == default_step, "filled ramp stop Im protocol is not increasing exactly by 10"
+                assert (
+                    np.unique(data[:, col]).size == 1
+                ), "filled baseline and time protocol for ramp Im are not the same"
+            assert (
+                np.mean(np.diff(data[:, 1])) == default_step
+            ), "filled ramp start Im protocol is not increasing exactly by 10"
+            assert (
+                np.mean(np.diff(data[:, 3])) == default_step
+            ), "filled ramp stop Im protocol is not increasing exactly by 10"
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_rheobase_exact_with_user_ramp_protocol_generation_and_analysis(self, tgui, analyse_specific_recs):
-        """
-        """
-        num_recs, __, rec_from, rec_to = self.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui,
-                                                                                              analyse_specific_recs)
+        """ """
+        (
+            num_recs,
+            __,
+            rec_from,
+            rec_to,
+        ) = tgui.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs)
         __ = self.fill_im_protocol_with_default_ramp_step(tgui, accept=True)
 
-        __, test_rheobase_rec, __ = tgui.adata.generate_test_rheobase_data_from_spikeinfo(rec_from,
-                                                                                          rec_to,
-                                                                                          tgui.adata.spikes_per_rec,
-                                                                                          change_spikeinfo=False)
+        (
+            __,
+            test_rheobase_rec,
+            __,
+        ) = tgui.adata.generate_test_rheobase_data_from_spikeinfo(
+            rec_from, rec_to, tgui.adata.spikes_per_rec, change_spikeinfo=False
+        )
         self.overwrite_modeldata_to_test_rheobase(tgui, test_rheobase_rec)
-        tgui.run_spikecount_analysis(["rheobase_exact"],
-                                     im_setting="user_input_im")
+        tgui.run_spikecount_analysis(["rheobase_exact"], im_setting="user_input_im")
 
         saved_data = tgui.mw.loaded_file.saved_rheobase_settings["im_array"]
-        assert saved_data.shape == (tgui.adata.num_recs, tgui.adata.num_samples), "full user Im ramp protocol is not padded"
-        assert saved_data[~np.isnan(saved_data[:, 0]), :].shape[0] == num_recs, "full user Im ramp protocol specified recs do not match recs to analyse"
+        assert saved_data.shape == (
+            tgui.adata.num_recs,
+            tgui.adata.num_samples,
+        ), "full user Im ramp protocol is not padded"
+        assert (
+            saved_data[~np.isnan(saved_data[:, 0]), :].shape[0] == num_recs
+        ), "full user Im ramp protocol specified recs do not match recs to analyse"
 
         baselines = np.zeros((num_recs, 1))
-        test_rheobase = self.find_true_rheobase_and_exact_im(tgui, saved_data, test_rheobase_rec, provide_baselines_instead_or_measure_from_data=baselines)
+        test_rheobase = self.find_true_rheobase_and_exact_im(
+            tgui,
+            saved_data,
+            test_rheobase_rec,
+            provide_baselines_instead_or_measure_from_data=baselines,
+        )
 
-        assert tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase, "model data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"] == test_rheobase,  "stored table data rheobase is incorrect after ramp user Im protocol"
-        assert tgui.eq(tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0], test_rheobase[0]),  "table rheobase is incorrect after ramp user Im protocol"
+        assert (
+            tgui.mw.loaded_file.spkcnt_data.loc[0, "rheobase"] == test_rheobase
+        ), "model data rheobase is incorrect after ramp user Im protocol"
+        assert (
+            tgui.mw.stored_tabledata.spkcnt_data[0].loc[0, "rheobase"] == test_rheobase
+        ), "stored table data rheobase is incorrect after ramp user Im protocol"
+        assert tgui.eq(
+            tgui.get_data_from_qtable("rheobase", rec_from, rec_to)[0], test_rheobase[0]
+        ), "table rheobase is incorrect after ramp user Im protocol"
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Manual Selection
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# TODO: there is some DRY on these two tests, but they have some subtle differences. Still, could combine.
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Manual Selection
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # TODO: there is some DRY on these two tests, but they have some subtle differences. Still, could combine.
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
     def test_spike_removed_after_analysis(self, tgui, analyse_specific_recs):
@@ -769,13 +908,14 @@ class TestSpikeCountGui:
         tgui function for more details).
         """
         for filenum in range(3):
-
-            tgui.test_manual_spike_selection(tgui,
-                                             filenum,
-                                             analyse_specific_recs,
-                                             run_analysis_function=self.run_spkcnt_for_delete_spike_function,
-                                             spikes_to_delete_function=self.spkcnt_spikes_to_delete_function,
-                                             test_function=self.event_selection_test_fs_latency)
+            tgui.test_manual_spike_selection(
+                tgui,
+                filenum,
+                analyse_specific_recs,
+                run_analysis_function=self.run_spkcnt_for_delete_spike_function,
+                spikes_to_delete_function=self.spkcnt_spikes_to_delete_function,
+                test_function=self.event_selection_test_fs_latency,
+            )
         tgui.shutdown()
 
     @pytest.mark.parametrize("analyse_specific_recs", [True, False])
@@ -783,40 +923,52 @@ class TestSpikeCountGui:
         """
         Remove and manually select spikes and check rheobase is properly updated.
 
-        TODO: this is very similar to tgui.test_manual_spike_selection(), which has already been factored to 
+        TODO: this is very similar to tgui.test_manual_spike_selection(), which has already been factored to
               incorporate test_spike_removed_after_analysis() and the test_events.py function test_event_selection().
               It should be refactored to support this function also.
         """
-        num_recs, __, rec_from, rec_to = self.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui,
-                                                                                              analyse_specific_recs)
+        (
+            num_recs,
+            __,
+            rec_from,
+            rec_to,
+        ) = tgui.setup_spkcnt_ramp_protocol_with_filled_protocol(tgui, analyse_specific_recs)
         __ = self.fill_im_protocol_with_default_ramp_step(tgui, accept=True)
 
-        __, test_rheobase_rec, __ = tgui.adata.generate_test_rheobase_data_from_spikeinfo(rec_from,
-                                                                                          rec_to,
-                                                                                          tgui.adata.spikes_per_rec,
-                                                                                          change_spikeinfo=False)
+        (
+            __,
+            test_rheobase_rec,
+            __,
+        ) = tgui.adata.generate_test_rheobase_data_from_spikeinfo(
+            rec_from, rec_to, tgui.adata.spikes_per_rec, change_spikeinfo=False
+        )
         rec_from = test_rheobase_rec
 
         self.overwrite_modeldata_to_test_rheobase(tgui, test_rheobase_rec)
 
-        tgui.run_spikecount_analysis(["rheobase_exact"],
-                                     im_setting="user_input_im")
+        tgui.run_spikecount_analysis(["rheobase_exact"], im_setting="user_input_im")
 
         spikes_to_delete, rec_from, rec_to = self.spkcnt_spikes_to_delete_function(tgui, rec_from, rec_to)
 
-        peak_times = dict(all={"data": copy.deepcopy(tgui.adata.spike_sample_idx)},
-                          m_one=dict(data=[], time=[]), m_two=dict(data=[], time=[]),
-                          m_three=dict(data=[], time=[]), m_four=dict(data=[], time=[]))
+        peak_times = dict(
+            all={"data": copy.deepcopy(tgui.adata.spike_sample_idx)},
+            m_one=dict(data=[], time=[]),
+            m_two=dict(data=[], time=[]),
+            m_three=dict(data=[], time=[]),
+            m_four=dict(data=[], time=[]),
+        )
 
         for rec, spike_rec_idx, dict_key in spikes_to_delete:
-
             tgui.mw.update_displayed_rec(rec)
             deleted_spike_time = tgui.adata.peak_times[tgui.time_type][rec][spike_rec_idx]
 
             deleted_spike_peak = np.max(tgui.adata.cannonical_spike)
 
-            tgui.click_upperplot_spotitem(tgui.mw.loaded_file_plot.spkcnt_plot, spike_rec_idx,
-                                          doubleclick_to_delete=True)
+            tgui.click_upperplot_spotitem(
+                tgui.mw.loaded_file_plot.spkcnt_plot,
+                spike_rec_idx,
+                doubleclick_to_delete=True,
+            )
 
             self.remove_spike_from_adata(tgui, rec, spike_rec_idx, tgui.adata.spike_sample_idx)
 
@@ -831,13 +983,16 @@ class TestSpikeCountGui:
         deleted_spike_keys = list(reversed([ele[2] for ele in spikes_to_delete]))
 
         for idx, deleted_spike_key in enumerate(deleted_spike_keys):
-
             rec = peak_times[deleted_spike_key]["rec"]
             tgui.mw.update_displayed_rec(rec)
 
             tgui.expand_xaxis_around_peak(tgui, peak_times[deleted_spike_key]["time"])
 
-            tgui.manually_select_spike(rec, spike_num=None, overide_time_and_amplitude=peak_times[deleted_spike_key]) # , rect_size_as_perc=0.02)
+            tgui.manually_select_spike(
+                rec,
+                spike_num=None,
+                overide_time_and_amplitude=peak_times[deleted_spike_key],
+            )  # , rect_size_as_perc=0.02)
 
             level_up_data = "all" if deleted_spike_key == "m_one" else deleted_spike_keys[idx + 1]
 
@@ -845,7 +1000,6 @@ class TestSpikeCountGui:
             self.check_rheobase(tgui, num_recs, rec_from, rec_to, test_rheobase_rec)
 
     def run_spkcnt_for_delete_spike_function(self, tgui):
-
         tgui.run_spikecount_analysis(["mean_isi_ms", "fs_latency_ms"])
 
     def spkcnt_spikes_to_delete_function(self, tgui, rec_from, rec_to):
@@ -861,8 +1015,7 @@ class TestSpikeCountGui:
     @pytest.mark.parametrize("align_bounds_across_recs", ["no_bounds", False, True])
     @pytest.mark.parametrize("spike_fa_type", ["spike_fa_local_variance", "spike_fa_divisor"])
     def test_spike_fa_divisor(self, tgui, analyse_specific_recs, align_bounds_across_recs, spike_fa_type):
-        """
-        """
+        """ """
         __, rec_from, rec_to = tgui.handle_analyse_specific_recs(analyse_specific_recs)
 
         spike_times = tgui.adata.peak_times[tgui.time_type]
@@ -871,19 +1024,19 @@ class TestSpikeCountGui:
             tgui.run_spikecount_analysis(["spike_fa"])
         else:
             bounds_vm = tgui.get_analyse_across_recs_or_not_boundaries_dict_for_spikes(align_bounds_across_recs)
-            tgui.run_spikecount_analysis(["spike_fa", "bounds"],
-                                         bounds_vm=bounds_vm)
+            tgui.run_spikecount_analysis(["spike_fa", "bounds"], bounds_vm=bounds_vm)
             spike_times = test_utils.vals_within_bounds(spike_times, bounds_vm["exp"][0], bounds_vm["exp"][1])
 
-        test_fa = self.calculate_fa(tgui, spike_times,
-                                    rec_from, rec_to, spike_fa_type)
+        test_fa = self.calculate_fa(tgui, spike_times, rec_from, rec_to, spike_fa_type)
 
-        assert utils.allclose(tgui.mw.loaded_file.spkcnt_data[spike_fa_type][rec_from:rec_to + 1],
-                              test_fa,
-                              1e-10)
-        assert utils.allclose(tgui.mw.stored_tabledata.spkcnt_data[0][spike_fa_type][rec_from:rec_to + 1],
-                              test_fa,
-                              1e-10)
-        assert utils.allclose(tgui.get_data_from_qtable(spike_fa_type, rec_from, rec_to),
-                              test_fa,
-                              1e-10)
+        assert utils.allclose(
+            tgui.mw.loaded_file.spkcnt_data[spike_fa_type][rec_from : rec_to + 1],
+            test_fa,
+            1e-10,
+        )
+        assert utils.allclose(
+            tgui.mw.stored_tabledata.spkcnt_data[0][spike_fa_type][rec_from : rec_to + 1],
+            test_fa,
+            1e-10,
+        )
+        assert utils.allclose(tgui.get_data_from_qtable(spike_fa_type, rec_from, rec_to), test_fa, 1e-10)

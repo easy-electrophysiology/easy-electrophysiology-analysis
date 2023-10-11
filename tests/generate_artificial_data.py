@@ -1,6 +1,7 @@
 import numpy as np
 import sys, os
 import copy
+
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
 from utils import utils
@@ -12,13 +13,15 @@ import scipy
 # Artificial Data Base Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
+
 class GenerateArtificialData:
     """
     Setup a base artificial dataset with a set number of runs and samples, resting vm and random im injections between -500 and 500.
     Artificial spike and input resistance data will inherit from this class.
     """
-    def __init__(self, num_recs=75, num_samples=16324, time_stop=2):
 
+    def __init__(self, num_recs=75, num_samples=16324, time_stop=2, inter_rec_time_gap=False):
+        self.inter_rec_time_gap = inter_rec_time_gap
         self.num_recs = num_recs
         self.num_samples = num_samples
         self.time_start = 0
@@ -34,7 +37,7 @@ class GenerateArtificialData:
         self.vm_array = self.gen_vm_array()
         self.im_array = self.gen_im_array()
         self.norm_time_array = self.gen_norm_time_array()
-        self.cum_time_array = self.gen_cum_time_array(self.norm_time_array)
+        self.cum_time_array = self.gen_cum_time_array(self.norm_time_array, inter_rec_time_gap)
         self.norm_min_max_time = self.gen_min_max_times(self.norm_time_array)
         self.cum_min_max_time = self.gen_min_max_times(self.cum_time_array)
         self.sin_time_array = self.gen_sin_time_array()
@@ -49,14 +52,16 @@ class GenerateArtificialData:
         self.stop_idx = np.floor(self.num_samples * 0.9).astype(int)
         self.start_time = self.norm_time_array[0][self.start_idx]
         self.stop_time = self.norm_time_array[0][self.stop_idx]
-        self.injection_ = np.linspace(self.current_injection_amplitude,
-                                      self.current_injection_amplitude,
-                                      self.stop_idx - self.start_idx).transpose()
+        self.injection_ = np.linspace(
+            self.current_injection_amplitude,
+            self.current_injection_amplitude,
+            self.stop_idx - self.start_idx,
+        ).transpose()
         self.inject_im()
 
     def inject_im(self):
         for rec in range(0, self.num_recs):
-            self.im_array[rec][self.start_idx:self.stop_idx] += self.injection_[rec]
+            self.im_array[rec][self.start_idx : self.stop_idx] += self.injection_[rec]
 
     def gen_vm_array(self):
         vm_array = np.empty((self.num_recs, self.num_samples))
@@ -65,7 +70,7 @@ class GenerateArtificialData:
 
     def gen_im_array(self):
         im_array = np.empty((self.num_recs, self.num_samples))
-        im_array.fill(self.im_offset)   # CONFUSING NAME
+        im_array.fill(self.im_offset)  # CONFUSING NAME
         return im_array
 
     def gen_norm_time_array(self):
@@ -74,18 +79,25 @@ class GenerateArtificialData:
         return norm_time_array
 
     def gen_sin_time_array(self):
-        sin_time_array = np.linspace(0, np.pi*2, self.num_samples)
+        sin_time_array = np.linspace(0, np.pi * 2, self.num_samples)
         sin_time_array = np.tile(sin_time_array, (self.num_recs, 1))
         return sin_time_array
 
-    def gen_cum_time_array(self, norm_time_array):
+    def gen_cum_time_array(self, norm_time_array, inter_rec_time_gap):
         """
         generate a time array that increases cumulatively across records (e.g rec1: 0-2, rec2: 2-4).
         """
         cum_time_array = utils.np_empty_nan(np.shape(norm_time_array))
         cum_time_array[0, :] = norm_time_array[0, :]
-        for rec in range(1, len(norm_time_array)):  # cum time array increases per row by time stop
-            cum_time_array[rec, :] = norm_time_array[rec, :] + (self.time_stop * rec) + (self.ts * rec)
+
+        # cum time array increases per row by time stop
+        if inter_rec_time_gap:
+            gaps = np.arange(norm_time_array.shape[0])
+        else:
+            gaps = np.zeros(norm_time_array.shape[0])
+
+        for rec in range(1, len(norm_time_array)):
+            cum_time_array[rec, :] = norm_time_array[rec, :] + (self.time_stop * rec) + (self.ts * rec) + gaps[rec]
 
         return cum_time_array
 
@@ -100,25 +112,27 @@ class GenerateArtificialData:
         perfect_tau = np.abs(num_samples / np.log(0.00000000999))
         return perfect_tau
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Artificial Curve Fitting Data Class 
+# Artificial Curve Fitting Data Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 class ArtificialCurveFitting(GenerateArtificialData):
     def __init__(self, num_recs=5):
         """
-        Create Curve Fitting artificial data for testing. 
-        
+        Create Curve Fitting artificial data for testing.
+
         This works by inserting functions of known coefficients into the data at specified timepoints (always the same). These are
         then measured through the GUI in the test_curve_fitting.py tests, with the appropriate initial estimates, and the
         coefficients are compared.
-        
+
         To vary the coefficients, a set of canonical coefficients (self.cannonical_coefs) are multiplied by random integers
         between 1 and 10. In a number of getter functions (e.g. get_b_coef) the relevant coefficient is returned
         by multiplying the canonical coeff with its stored offset.
 
         For more detail, see the test_curve_fitting.py.
-        
+
         """
         super().__init__(num_recs=num_recs, num_samples=2048, time_stop=1.2)  # long to run, low num recs
 
@@ -147,14 +161,17 @@ class ArtificialCurveFitting(GenerateArtificialData):
         self.update_cannonical_coefs()
 
     def update_cannonical_coefs(self):
-        self.cannonical_coefs = {"monoexp": np.array([self.offset, self.b1, self.tau]),
-                                 "biexp_decay": np.array([self.offset, self.b1, self.tau, self.b1, self.tau]),
-                                 "biexp_event": np.array([self.offset, self.b1, self.tau, self.tau]),  # tau is correct for this too, see function
-                                 "triexp": np.array([self.offset, self.b1, self.tau, self.b1, self.tau, self.b1, self.tau]),
-                                 }
+        self.cannonical_coefs = {
+            "monoexp": np.array([self.offset, self.b1, self.tau]),
+            "biexp_decay": np.array([self.offset, self.b1, self.tau, self.b1, self.tau]),
+            "biexp_event": np.array(
+                [self.offset, self.b1, self.tau, self.tau]
+            ),  # tau is correct for this too, see function
+            "triexp": np.array([self.offset, self.b1, self.tau, self.b1, self.tau, self.b1, self.tau]),
+        }
 
-# Varying Coefs and Inserting Functions
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Varying Coefs and Inserting Functions
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def insert_function_to_data(self, vary_coefs, func_type, pos_or_neg="pos"):
         """
@@ -212,26 +229,46 @@ class ArtificialCurveFitting(GenerateArtificialData):
         self.coef_offsets = []
 
         for rec in range(self.num_recs):
-
             if vary_coefs in ["within_function", "across_records"]:
-
                 self.coef_offsets.append(
-                                         {"monoexp": np.array([1, self.rand("b1"), self.rand("tau")]),
-                                          "biexp_decay": np.array([1, self.rand("b1"), self.rand("tau"), self.rand("b1"), self.rand("tau")]),
-                                          "biexp_event": np.array([1, self.rand("b1"), self.rand("tau"), self.rand("tau")]),
-                                          "triexp": np.array([1, self.rand("b1"), self.rand("tau"), self.rand("b1"), self.rand("tau"), self.rand("b1"), self.rand("tau")])
-                                          }
-                                         )
+                    {
+                        "monoexp": np.array([1, self.rand("b1"), self.rand("tau")]),
+                        "biexp_decay": np.array(
+                            [
+                                1,
+                                self.rand("b1"),
+                                self.rand("tau"),
+                                self.rand("b1"),
+                                self.rand("tau"),
+                            ]
+                        ),
+                        "biexp_event": np.array([1, self.rand("b1"), self.rand("tau"), self.rand("tau")]),
+                        "triexp": np.array(
+                            [
+                                1,
+                                self.rand("b1"),
+                                self.rand("tau"),
+                                self.rand("b1"),
+                                self.rand("tau"),
+                                self.rand("b1"),
+                                self.rand("tau"),
+                            ]
+                        ),
+                    }
+                )
             else:
                 self.coef_offsets.append(
-                                         {"monoexp": np.array([1, 1, 1]),
-                                          "biexp_decay": np.array([1, 1, 1, 1, 1]),
-                                          "biexp_event": np.array([1, 1, 1, 1]),
-                                          "triexp": np.array([1, 1, 1, 1, 1, 1, 1])
-                                          }
-                                         )
+                    {
+                        "monoexp": np.array([1, 1, 1]),
+                        "biexp_decay": np.array([1, 1, 1, 1, 1]),
+                        "biexp_event": np.array([1, 1, 1, 1]),
+                        "triexp": np.array([1, 1, 1, 1, 1, 1, 1]),
+                    }
+                )
 
-    def insert_monoexp_function(self, orig_func_type):  # TODO: im not tested! FUNCTION NAME CONFUSING INSERT ANY FUNCTIN!
+    def insert_monoexp_function(
+        self, orig_func_type
+    ):  # TODO: im not tested! FUNCTION NAME CONFUSING INSERT ANY FUNCTIN!
         """
         Insert a function of func_type into the data.
 
@@ -249,15 +286,13 @@ class ArtificialCurveFitting(GenerateArtificialData):
         self.vm_array = self.gen_vm_array()
 
         for rec in range(self.num_recs):
-
             func = core_analysis_methods.get_fit_functions(func_type)
             coefs = self.cannonical_coefs[func_type]
             coef_offsets = self.coef_offsets[rec][func_type]
 
             x_to_fit = np.arange(self.function_samples)
 
-            func_data = func(x_to_fit,
-                             coefs * coef_offsets)
+            func_data = func(x_to_fit, coefs * coef_offsets)
 
             if orig_func_type == "min":
                 func_data -= self.offset
@@ -270,22 +305,21 @@ class ArtificialCurveFitting(GenerateArtificialData):
             if func_type == "biexp_event":
                 self.store_biexp_event_func_data[rec].append(func_data)
 
-            self.im_array[rec, self.start_sample:self.stop_sample] = func_data
-            self.vm_array[rec, self.start_sample:self.stop_sample] = func_data
+            self.im_array[rec, self.start_sample : self.stop_sample] = func_data
+            self.vm_array[rec, self.start_sample : self.stop_sample] = func_data
 
-# Getters and Setters.
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Used for getting the true coefficient values, taking into account the coefficient offsets. returns for all records for qtable
-# tests or per-record for model tests.
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Getters and Setters.
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Used for getting the true coefficient values, taking into account the coefficient offsets. returns for all records for qtable
+    # tests or per-record for model tests.
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def get_b0(self, rec_from=None, rec_to=None, rec=None):
         if rec is not None:
             b0 = self.offset
         else:
             num_recs = rec_to - rec_from + 1
-            b0 = np.repeat(self.offset,
-                           num_recs)
+            b0 = np.repeat(self.offset, num_recs)
         return b0
 
     def get_offsets_within_recs(self, rec_from, rec_to, func_type, idx):
@@ -296,11 +330,7 @@ class ArtificialCurveFitting(GenerateArtificialData):
         return np.array(all_data)
 
     def get_b_coef(self, func_type, b_name, rec_from=None, rec_to=None, rec=None):
-
-        b_idx = {"b1": 1,
-                 "b2": 3,
-                 "b3": 5
-                 }
+        b_idx = {"b1": 1, "b2": 3, "b3": 5}
         idx = b_idx[b_name]
 
         if rec is not None:
@@ -312,14 +342,14 @@ class ArtificialCurveFitting(GenerateArtificialData):
         return bx
 
     def get_tau(self, func_type, tau_name, rec_from=None, rec_to=None, rec=None):
-
-        tau_idx = {"tau": 2,
-                   "tau1": 2,
-                   "tau2": 4,
-                   "tau3": 6,
-                   "fit_rise": 2,
-                   "fit_decay": 3,
-                   }
+        tau_idx = {
+            "tau": 2,
+            "tau1": 2,
+            "tau2": 4,
+            "tau3": 6,
+            "fit_rise": 2,
+            "fit_decay": 3,
+        }
         idx = tau_idx[tau_name]
 
         if rec is not None:
@@ -330,8 +360,8 @@ class ArtificialCurveFitting(GenerateArtificialData):
 
         return taux
 
-# Sloping Im / Vm injections
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Sloping Im / Vm injections
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def update_vm_im_with_slope_injection(self):
         """
@@ -361,11 +391,9 @@ class ArtificialCurveFitting(GenerateArtificialData):
         self.stop_times = utils.np_empty_nan(self.num_recs)
 
         for rec in range(self.num_recs):
-
-            start_sample, stop_sample = test_utils.random_int_with_minimum_distance(min_val=10,
-                                                                                    max_val=self.num_samples-10,
-                                                                                    n=2,
-                                                                                    min_distance=100)
+            start_sample, stop_sample = test_utils.random_int_with_minimum_distance(
+                min_val=10, max_val=self.num_samples - 10, n=2, min_distance=100
+            )
             self.start_sample[rec] = start_sample
             self.stop_sample[rec] = stop_sample
 
@@ -373,20 +401,18 @@ class ArtificialCurveFitting(GenerateArtificialData):
             self.stop_times[rec] = self.time_array[rec][stop_sample]
 
     def gen_slope_array(self, current_inections):
-
-        slope_array = utils.np_empty_nan((self.num_recs,
-                                          self.num_samples))
+        slope_array = utils.np_empty_nan((self.num_recs, self.num_samples))
 
         for rec in range(self.num_recs):
-            slope_array[rec, :] = np.linspace(0,
-                                              current_inections[rec],
-                                              self.num_samples)
+            slope_array[rec, :] = np.linspace(0, current_inections[rec], self.num_samples)
 
         return slope_array
+
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Master Class for Spike Count and Events Artificial Data
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 class EventAndSpikesMaster(GenerateArtificialData):
     """
@@ -395,15 +421,24 @@ class EventAndSpikesMaster(GenerateArtificialData):
     increasing time series). This can be used to compare the known number of spikes / time times with those calculated from
     the current_calc.count_spikes function
     """
-    def __init__(self, num_recs=75, num_samples=16324, time_stop=2):
-        super().__init__(num_recs, num_samples, time_stop)
+
+    def __init__(self, num_recs=75, num_samples=16324, time_stop=2, inter_rec_time_gap=False):
+        super().__init__(num_recs, num_samples, time_stop, inter_rec_time_gap)
         self.peak_times = dict()
 
         # make a cannonical spike and array to fill with spikes
-        self.spikes_per_rec = np.random.randint(self.min_spikes, self.max_num_spikes, (self.num_recs, 1)).squeeze()  # need at least 5 evs for some tests
+        self.spikes_per_rec = np.random.randint(
+            self.min_spikes, self.max_num_spikes, (self.num_recs, 1)
+        ).squeeze()  # need at least 5 evs for some tests
+
         self.spikes_per_rec = np.atleast_1d(self.spikes_per_rec)
-        self.spike_sample_idx = utils.np_empty_nan((self.num_recs, self.max_num_spikes))  # holds the idx of all spikes (start), add samples_from_start_to_peak to get peak value
+
+        self.spike_sample_idx = utils.np_empty_nan(
+            (self.num_recs, self.max_num_spikes)
+        )  # holds the idx of all spikes (start), add samples_from_start_to_peak to get peak value
+
         self.peak_times["normalised"] = utils.np_empty_nan((self.num_recs, self.max_num_spikes))
+
         self.peak_times["cumulative"] = utils.np_empty_nan((self.num_recs, self.max_num_spikes))
         self.peak_times_ = None  # used for artificial data in gui tests
         self.spike_peak_idx = None
@@ -420,18 +455,24 @@ class EventAndSpikesMaster(GenerateArtificialData):
             if spikes_in_rec < 1:  # TODO: now it is not possible to have less than 5 spikes
                 potential_indicies = np.array([], "int32")
             elif spikes_in_rec == 1:
-                potential_indicies = np.random.randint(0, self.num_samples-self.spike_width+1, spikes_in_rec)
+                potential_indicies = np.random.randint(0, self.num_samples - self.spike_width + 1, spikes_in_rec)
             else:
-                potential_indicies = test_utils.random_int_with_minimum_distance(min_val=self.rec_start_stop_spike_pad,
-                                                                                 max_val=self.num_samples-self.rec_start_stop_spike_pad,
-                                                                                 n=spikes_in_rec,
-                                                                                 min_distance=self.min_samples_between_spikes,
-                                                                                 avoid_range=[self.bounds_start_idx, self.bounds_stop_idx, 100])
+                potential_indicies = test_utils.random_int_with_minimum_distance(
+                    min_val=self.rec_start_stop_spike_pad,
+                    max_val=self.num_samples - self.rec_start_stop_spike_pad,
+                    n=spikes_in_rec,
+                    min_distance=self.min_samples_between_spikes,
+                    avoid_range=[self.bounds_start_idx, self.bounds_stop_idx, 100],
+                )
 
             self.spike_sample_idx[rec, 0:spikes_in_rec] = potential_indicies
             self.spike_peak_idx = self.spike_sample_idx + self.samples_from_start_to_peak
-            self.peak_times["normalised"][rec, 0:spikes_in_rec] = self.norm_time_array[rec][potential_indicies + self.samples_from_start_to_peak]
-            self.peak_times["cumulative"][rec, 0:spikes_in_rec] = self.cum_time_array[rec][potential_indicies + self.samples_from_start_to_peak]
+            self.peak_times["normalised"][rec, 0:spikes_in_rec] = self.norm_time_array[rec][
+                potential_indicies + self.samples_from_start_to_peak
+            ]
+            self.peak_times["cumulative"][rec, 0:spikes_in_rec] = self.cum_time_array[rec][
+                potential_indicies + self.samples_from_start_to_peak
+            ]
 
     def fill_vm_array_with_spikes(self):
         """
@@ -443,7 +484,7 @@ class EventAndSpikesMaster(GenerateArtificialData):
                 idx = self.spike_sample_idx[rec, col]
                 if ~np.isnan(idx):
                     idx = idx.astype(int)
-                    self.vm_array[rec, idx:idx+self.spike_width] = self.cannonical_spike
+                    self.vm_array[rec, idx : idx + self.spike_width] = self.cannonical_spike
 
     def generate_test_rheobase_data_from_spikeinfo(self, rec_from, rec_to, spike_info, change_spikeinfo=True):
         """
@@ -463,25 +504,44 @@ class EventAndSpikesMaster(GenerateArtificialData):
                 spike_info[rec] = element if rec >= test_rheobase_rec else dict()
 
         # calculate and compare rheobase
-        test_rheobase = True if np.any(spike_info) else False
+        test_rheobase = True if any(spike_info) else False
         if test_rheobase:
-            while not spike_info[test_rheobase_rec]:  # if test rheobase rec happends to have zero spikes, find the first rec that doesn't.
+            while not spike_info[
+                test_rheobase_rec
+            ]:  # if test rheobase rec happends to have zero spikes, find the first rec that doesn't.
                 if not spike_info[test_rheobase_rec]:
                     test_rheobase_rec += 1
 
-        return spike_info, test_rheobase_rec, test_rheobase  # ARNT THESE ALWAYS THE SAME?
+        return (
+            spike_info,
+            test_rheobase_rec,
+            test_rheobase,
+        )  # ARNT THESE ALWAYS THE SAME?
 
     def generate_bounds(self):
-        bounds = [[self.norm_time_array[0, self.bounds_start_idx]] * self.num_recs,
-                  [self.norm_time_array[0, self.bounds_stop_idx]] * self.num_recs]
+        bounds = [
+            [self.norm_time_array[0, self.bounds_start_idx]] * self.num_recs,
+            [self.norm_time_array[0, self.bounds_stop_idx]] * self.num_recs,
+        ]
         return bounds
 
     def generate_baseline_bounds(self):
-        bounds = [[self.norm_time_array[0, 0]] * self.num_recs,
-                  [self.norm_time_array[0, self.start_idx - 10]] * self.num_recs]
+        bounds = [
+            [self.norm_time_array[0, 0]] * self.num_recs,
+            [self.norm_time_array[0, self.start_idx - 10]] * self.num_recs,
+        ]
         return bounds
 
-    def subtract_results_from_data(self, test_spkcnt, ee_spike_info, ee_spike_count, rec_from, rec_to, time_type, bounds):
+    def subtract_results_from_data(
+        self,
+        test_spkcnt,
+        ee_spike_info,
+        ee_spike_count,
+        rec_from,
+        rec_to,
+        time_type,
+        bounds,
+    ):
         """
         Compare test data with data calculated by easy electrophysiology (ee_*)
         """
@@ -496,8 +556,10 @@ class EventAndSpikesMaster(GenerateArtificialData):
         test_spike_times = test_spkcnt.peak_times[time_type][rec_from:upper_bound]
         test_spike_times = test_utils.vals_within_bounds(test_spike_times, bound_low, bound_high)
 
-        spike_times_equal = np.array_equal(test_spike_times[~np.isnan(test_spike_times)],
-                                           ee_spike_times[~np.isnan(ee_spike_times)])
+        spike_times_equal = np.array_equal(
+            test_spike_times[~np.isnan(test_spike_times)],
+            ee_spike_times[~np.isnan(ee_spike_times)],
+        )
 
         # check spike counts
         true_spike_count = [len(spikes[~np.isnan(spikes)]) for spikes in test_spike_times]
@@ -523,16 +585,22 @@ class EventAndSpikesMaster(GenerateArtificialData):
                 else:
                     samples_from_start_to_peak = self.samples_from_start_to_peak[rec][spk]
 
-                self.peak_times["normalised"][rec, spk] = self.norm_time_array[rec][spk_insert_idx + samples_from_start_to_peak]
-                self.peak_times["cumulative"][rec, spk] = self.cum_time_array[rec][spk_insert_idx + samples_from_start_to_peak]
+                self.peak_times["normalised"][rec, spk] = self.norm_time_array[rec][
+                    spk_insert_idx + samples_from_start_to_peak
+                ]
+                self.peak_times["cumulative"][rec, spk] = self.cum_time_array[rec][
+                    spk_insert_idx + samples_from_start_to_peak
+                ]
 
     def num_spikes(self):
         spike_times = self.peak_times_[~np.isnan(self.peak_times_)]  # TODO: make remove nans
         return spike_times.size
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Artificial Spike Count Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 class TestArtificialSkCntData(EventAndSpikesMaster):
     def __init__(self, max_num_spikes, min_spikes, num_recs=75):
@@ -542,10 +610,14 @@ class TestArtificialSkCntData(EventAndSpikesMaster):
 
         self.spike_width = 50
         self.cannonical_spike = self.generate_cannonical_spike()
-        self.samples_from_start_to_peak = np.argmax(self.cannonical_spike)  # number of samples start of spike (canonical spike) to baseline and peak
+        self.samples_from_start_to_peak = np.argmax(
+            self.cannonical_spike
+        )  # number of samples start of spike (canonical spike) to baseline and peak
 
         self.min_samples_between_spikes = 16
-        self.rec_start_stop_spike_pad = 50  # padding in samples at start / end of record where no spikes will be inserted
+        self.rec_start_stop_spike_pad = (
+            50  # padding in samples at start / end of record where no spikes will be inserted
+        )
 
         # create vm_array filled with spike counts, and the norm and cumulative times of those spike peaks
         self.create_array_of_indicies_to_insert_spikes()
@@ -556,13 +628,15 @@ class TestArtificialSkCntData(EventAndSpikesMaster):
         cannonical_spike += self.resting_vm
         return cannonical_spike
 
+
 class TestArtificialsKinetics(EventAndSpikesMaster):
     """
     For peaks in skinetics, use all_true_peaks_idx
     """
+
     def __init__(self, num_recs, max_num_spikes, min_spikes, num_samples, time_stop):
         self.max_num_spikes = max_num_spikes
-        self.min_spikes = min_spikes # 15 if num_recs == 1 else 5
+        self.min_spikes = min_spikes  # 15 if num_recs == 1 else 5
         super().__init__(num_recs=num_recs, num_samples=num_samples, time_stop=time_stop)
 
         self.spike_width = 100  # max spike width with freq = 1
@@ -570,7 +644,9 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         self.samples_from_start_to_peak = 5  # number of samples start of spike (cannonical spike) to baseline and peak
 
         self.min_samples_between_spikes = self.spike_width * 1.5
-        self.rec_start_stop_spike_pad = self.spike_width * 10  # padding in samples at start / end of record where no spikes will be inserted
+        self.rec_start_stop_spike_pad = (
+            self.spike_width * 10
+        )  # padding in samples at start / end of record where no spikes will be inserted
 
         # create vm_array filled with spike counts, and the norm and cumulative times of those spike peaks
         self.create_array_of_indicies_to_insert_spikes()
@@ -583,7 +659,6 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         self.im_units = "pA"
 
     def generate_cannonical_spike_params(self):
-
         cannonical_spike_params = []
         for rec in range(self.num_recs):
             spikes_this_rec = self.spikes_per_rec[rec]
@@ -599,7 +674,7 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
     def generate_spike(self, amplitude, freq):
         x = np.linspace(0, np.pi * 2, self.spike_width + 1) * freq
         spike = self.resting_vm + (amplitude * np.sin(x))
-        spike_num_samples = int(self.spike_width/freq)
+        spike_num_samples = int(self.spike_width / freq)
         spike = spike[0:spike_num_samples]
         return spike, spike_num_samples
 
@@ -612,7 +687,6 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         self.all_true_peaks_idx = []
         self.all_true_mins = []
         for rec in range(0, self.num_recs):
-
             rec_samples_to_peaks = np.array([])
             true_peaks = np.array([])
             true_mins = np.array([])
@@ -620,18 +694,22 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
                 idx = self.spike_sample_idx[rec, col]
                 if ~np.isnan(idx):
                     idx = idx.astype(int)
-                    spike, spike_num_samples = self.generate_spike(self.cannonical_spike_params[rec]["amplitudes"][col],
-                                                                   self.cannonical_spike_params[rec]["freqs"][col])
+                    spike, spike_num_samples = self.generate_spike(
+                        self.cannonical_spike_params[rec]["amplitudes"][col],
+                        self.cannonical_spike_params[rec]["freqs"][col],
+                    )
                     spike_peak_idx = np.argmax(spike)
                     rec_samples_to_peaks = np.hstack([rec_samples_to_peaks, spike_peak_idx]).astype(int)
-                    self.vm_array[rec, idx:idx+spike_num_samples] = spike
+                    self.vm_array[rec, idx : idx + spike_num_samples] = spike
                     true_peaks = np.hstack([true_peaks, np.max(spike)])
                     true_mins = np.hstack([true_mins, np.min(spike)])
 
             self.samples_from_start_to_peak.append(rec_samples_to_peaks)
             isnan_rec_spike_idx = self.spike_sample_idx[rec][~np.isnan(self.spike_sample_idx[rec])]
             self.all_true_peaks_idx.append(isnan_rec_spike_idx + rec_samples_to_peaks)
-            self.all_true_peaks.append(true_peaks)  # lower resolution means true peaks is not always expected by sine function
+            self.all_true_peaks.append(
+                true_peaks
+            )  # lower resolution means true peaks is not always expected by sine function
             self.all_true_mins.append(true_mins)
 
     def convert_sine_to_time(self, sine_time):
@@ -644,18 +722,15 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         converted_time = (sine_time / sine_ts) * self.ts
         return converted_time
 
-
     def get_spike_max_slope(self, data, n_samples):
-
         max_slope = []
         slope_data = []
         for i in range(len(data) - n_samples):
-            y = data[i:i + n_samples]
+            y = data[i : i + n_samples]
             x = np.arange(len(y)) * self.ts
 
             regress = scipy.stats.linregress(x, y)
-            max_slope.append(
-                             regress.slope / 1000)  # convert slope from s to ms
+            max_slope.append(regress.slope / 1000)  # convert slope from s to ms
 
             slope = regress.slope * x + regress.intercept
             slope_data.append(slope)
@@ -663,34 +738,37 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         return max_slope, slope_data
 
     def get_max_slope(self, n_samples_rise, n_samples_decay):
-        """
-        """
+        """ """
         rec_max_rise = []
         rec_max_decay = []
         rec_rise_slopes = []
         rec_decay_slopes = []
         for rec in range(self.num_recs):
-
             spike_max_rise = []
             spike_max_decay = []
             spike_rise_slopes = []
             spike_decay_slopes = []
-            for amplitude, freq in zip(self.cannonical_spike_params[rec]["amplitudes"],
-                                       self.cannonical_spike_params[rec]["freqs"]):
-
+            for amplitude, freq in zip(
+                self.cannonical_spike_params[rec]["amplitudes"],
+                self.cannonical_spike_params[rec]["freqs"],
+            ):
                 spike, __ = self.generate_spike(amplitude, freq)
                 peak_idx = np.argmax(spike)
                 through_idx = np.argmin(spike)
 
-                rise_data = spike[0:peak_idx + 1]
-                decay_data = spike[peak_idx:through_idx + 1]
+                rise_data = spike[0 : peak_idx + 1]
+                decay_data = spike[peak_idx : through_idx + 1]
 
                 max_rise_slope, rise_slopes = self.get_spike_max_slope(rise_data, n_samples_rise)
                 max_decay_slope, decay_slopes = self.get_spike_max_slope(decay_data, n_samples_decay)
 
-                max_idx = np.argmax(max_rise_slope)  # get the maximum of the set of slopes (max for rise, min for decay)
+                max_idx = np.argmax(
+                    max_rise_slope
+                )  # get the maximum of the set of slopes (max for rise, min for decay)
                 min_idx = np.argmin(max_decay_slope)
-                spike_max_rise.append(max_rise_slope[max_idx])  # save the max rise / decay and the slope data per spike, later saved per_rec
+                spike_max_rise.append(
+                    max_rise_slope[max_idx]
+                )  # save the max rise / decay and the slope data per spike, later saved per_rec
                 spike_max_decay.append(max_decay_slope[min_idx])
 
                 spike_rise_slopes.append(np.hstack(rise_slopes[max_idx]))
@@ -704,29 +782,47 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
 
         return rec_max_rise, rec_max_decay, rec_rise_slopes, rec_decay_slopes
 
-    def get_times_paramteres(self, parameter, min_cutoff=None, max_cutoff=None, decay_bound="fAHP", bounds_vm=False, time_type=None):
-
+    def get_times_paramteres(
+        self,
+        parameter,
+        min_cutoff=None,
+        max_cutoff=None,
+        decay_bound="fAHP",
+        bounds_vm=False,
+        time_type=None,
+    ):
         all_parameter = []
         for rec in range(self.num_recs):
             freqs = self.cannonical_spike_params[rec]["freqs"]
 
             if bounds_vm:
-                within_bounds = self.get_within_bounds_spiketimes(rec, bounds_vm, time_type, return_as_bool=True)[:len(freqs)]
+                within_bounds = self.get_within_bounds_spiketimes(rec, bounds_vm, time_type, return_as_bool=True)[
+                    : len(freqs)
+                ]
                 freqs = freqs[within_bounds]
 
             rec_freqs = np.array([])
             for freq in freqs:
-
                 if parameter == "rise_time":
-                    sine_time = (np.arcsin(min_cutoff/100) - np.arcsin(max_cutoff/100)) / freq  # TODO: DRY from test_skinetics unit tests
+                    sine_time = (
+                        np.arcsin(min_cutoff / 100) - np.arcsin(max_cutoff / 100)
+                    ) / freq  # TODO: DRY from test_skinetics unit tests
                 elif parameter == "half_width":
                     sine_time = 2 * (np.arcsin(1) - np.arcsin(0.5)) / freq
                 elif parameter == "decay_time":
-                    sin_max_cutoff = 1 - ((1 - 0) * max_cutoff/100) if decay_bound == "thr" else 1 - (2 * (max_cutoff / 100))
+                    sin_max_cutoff = (
+                        1 - ((1 - 0) * max_cutoff / 100) if decay_bound == "thr" else 1 - (2 * (max_cutoff / 100))
+                    )
                     expected_min_time = np.arcsin(1) + (np.arcsin(1) - np.arcsin(sin_max_cutoff))
-                    sin_min_cutoff = 1 - ((1 - 0) * min_cutoff/100) if decay_bound == "thr" else (2 * (min_cutoff / 100) - 1)
-                    expected_max_time = np.arcsin(1) + (np.arcsin(1) - np.arcsin(sin_min_cutoff)) if decay_bound == "thr" else np.arcsin(1) * 3 - (np.arcsin(1) - np.arcsin(sin_min_cutoff))
-                    sine_time = expected_min_time / freq -  expected_max_time / freq
+                    sin_min_cutoff = (
+                        1 - ((1 - 0) * min_cutoff / 100) if decay_bound == "thr" else (2 * (min_cutoff / 100) - 1)
+                    )
+                    expected_max_time = (
+                        np.arcsin(1) + (np.arcsin(1) - np.arcsin(sin_min_cutoff))
+                        if decay_bound == "thr"
+                        else np.arcsin(1) * 3 - (np.arcsin(1) - np.arcsin(sin_min_cutoff))
+                    )
+                    sine_time = expected_min_time / freq - expected_max_time / freq
 
                 expected_param = self.convert_sine_to_time(sine_time)
                 rec_freqs = np.hstack([rec_freqs, expected_param])
@@ -735,14 +831,13 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
         return all_parameter
 
     def get_within_bounds_spiketimes(self, rec, bounds_vm, time_type, return_as_bool=False, cut_nan=False):
-        """
-        """
+        """ """
         rec_peak_times = self.peak_times[time_type][rec]
 
         if cut_nan:
             rec_peak_times = rec_peak_times[~np.isnan(rec_peak_times)]
 
-        within_bound = test_utils.vals_within_bounds(rec_peak_times,  bounds_vm["exp"][0][rec], bounds_vm["exp"][1][rec])
+        within_bound = test_utils.vals_within_bounds(rec_peak_times, bounds_vm["exp"][0][rec], bounds_vm["exp"][1][rec])
 
         if return_as_bool:
             within_bound = ~np.isnan(within_bound)
@@ -750,12 +845,25 @@ class TestArtificialsKinetics(EventAndSpikesMaster):
             within_bound = within_bound[~np.isnan(within_bound)]
         return within_bound
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Artificial Events Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
+
 class TestArtificialEventData(EventAndSpikesMaster):
-    def __init__(self, num_recs, num_samples, time_stop, min_num_spikes, max_num_spikes, event_type="monoexp", event_samples=None, negative_events=True):
+    def __init__(
+        self,
+        num_recs,
+        num_samples,
+        time_stop,
+        min_num_spikes,
+        max_num_spikes,
+        event_type="monoexp",
+        event_samples=None,
+        negative_events=True,
+        inter_rec_time_gap=False,
+    ):
         """
         Generate events on a dataset. Similar to curve fitting, canonical coefficients for the events are initiated so that
         all events have the same b1 (modelled as a straight line) and decay(modelled as exponential event) This form was chosen
@@ -764,11 +872,11 @@ class TestArtificialEventData(EventAndSpikesMaster):
         for comparison with the measured offset in text functions.
         """
         self.min_spikes = min_num_spikes
-        self.max_num_spikes = max_num_spikes # increase num samples if want to increase further
+        self.max_num_spikes = max_num_spikes  # increase num samples if want to increase further
         self.rise_samples = 100
         self.samples_from_start_to_peak = 100 - 1
 
-        super().__init__(num_recs, num_samples, time_stop)
+        super().__init__(num_recs, num_samples, time_stop, inter_rec_time_gap)
 
         self.event_type = event_type
         self.im_array = copy.deepcopy(self.vm_array)
@@ -776,14 +884,20 @@ class TestArtificialEventData(EventAndSpikesMaster):
         self.decay_samples = 300
 
         if event_samples is None:
-            self.event_samples = 2500 if self.event_type == "biexp" else self.rise_samples + self.decay_samples - 1  # account for overlapping peak - 1 see generate function
+            self.event_samples = (
+                2500 if self.event_type == "biexp" else self.rise_samples + self.decay_samples - 1
+            )  # account for overlapping peak - 1 see generate function
         else:
             self.event_samples = event_samples
 
         self.rise_div = 10  # factor to divide the rise time by for artificial biexp events (rise and decay figure is generated together then rise is divided)
 
-        if self.event_type == "biexp":  # for biexp we need large B1 to give broad range of event sizes for checking different templates simultaneously.
-            self.b1 = -75               # for monoexp that we test rise time half width etc. on we want lower B1 to the rise and decay is not undersampled (I think?)
+        if (
+            self.event_type == "biexp"
+        ):  # for biexp we need large B1 to give broad range of event sizes for checking different templates simultaneously.
+            self.b1 = (
+                -75
+            )  # for monoexp that we test rise time half width etc. on we want lower B1 to the rise and decay is not undersampled (I think?)
         else:
             self.b1 = -10 if negative_events else 10
 
@@ -792,9 +906,13 @@ class TestArtificialEventData(EventAndSpikesMaster):
         self.spike_width = self.event_samples
         self.event_width_ms = self.event_samples * self.ts * 1000
         self.rec_start_stop_spike_pad = self.event_samples
-        self.min_samples_between_spikes = int(0.020 * self.fs * 4) # self.event_samples * 3 # 1.5 # int(0.020 * self.fs * 1.5)  # 0.020 is the default 20 ms template size
+        self.min_samples_between_spikes = int(
+            0.020 * self.fs * 4
+        )  # self.event_samples * 3 # 1.5 # int(0.020 * self.fs * 1.5)  # 0.020 is the default 20 ms template size
 
-        self.rec_start_stop_spike_pad = self.event_samples * 2   # padding in samples at start / end of record where no spikes will be inserted
+        self.rec_start_stop_spike_pad = (
+            self.event_samples * 2
+        )  # padding in samples at start / end of record where no spikes will be inserted
         self.tau = self.get_perfect_tau(self.event_samples)
         self.rise = self.get_perfect_tau(self.event_samples)
         self.decay = self.get_perfect_tau(self.event_samples)
@@ -829,7 +947,12 @@ class TestArtificialEventData(EventAndSpikesMaster):
         return event, area_under_curve
 
     def generate_artificial_biexp_spike(self, b1_offset, rise_offset, decay_offset):
-        coefs = (0, self.b1 * b1_offset, self.rise * rise_offset, self.decay * decay_offset)
+        coefs = (
+            0,
+            self.b1 * b1_offset,
+            self.rise * rise_offset,
+            self.decay * decay_offset,
+        )
         event_x = np.arange(0, self.event_samples)
         event = core_analysis_methods.biexp_event_function(event_x, coefs)
         event += self.resting_vm
@@ -846,9 +969,9 @@ class TestArtificialEventData(EventAndSpikesMaster):
         self.min_max_time = self.gen_min_max_times(self.cum_time_array)
         self.overwrite_spike_times()
 
-# Getters
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Methods for getting coefficients and parameters calculated from the events / the coefficient offets
+    # Getters
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Methods for getting coefficients and parameters calculated from the events / the coefficient offets
 
     def get_rise(self, b1_offset):
         return np.linspace(0, self.b1 * b1_offset, self.rise_samples)
@@ -868,14 +991,17 @@ class TestArtificialEventData(EventAndSpikesMaster):
     def calc_event_half_width(self, tau_offset=1):
         decay_samples = self.get_decay_percent_num_samples(50, tau_offset)
         half_decay_time = (decay_samples * self.ts) * 1000
-        half_rise_sample = self.rise_samples * 0.5  # only works for even data but measuring from data directly led to 49 (49 and 50 were equivalent). This is better.
+        half_rise_sample = (
+            self.rise_samples * 0.5
+        )  # only works for even data but measuring from data directly led to 49 (49 and 50 were equivalent). This is better.
         half_rise_time = (half_rise_sample * self.ts) * 1000
-        half_width_ms = half_decay_time + half_rise_time  # opposite way to EE, add the half-to-peak on the rise and peak-to-half on the decay
+        half_width_ms = (
+            half_decay_time + half_rise_time
+        )  # opposite way to EE, add the half-to-peak on the rise and peak-to-half on the decay
 
         return half_width_ms
 
     def get_all_half_widths(self):
-
         half_widths = []
         for ev_num in range(self.num_events()):
             ev_hw = self.calc_event_half_width(self.tau_offsets[ev_num])
@@ -883,7 +1009,6 @@ class TestArtificialEventData(EventAndSpikesMaster):
         return np.array(half_widths)
 
     def get_all_decay_times(self, decay_percent=37):
-
         decay_samples = []
         for ev_num in range(self.num_events()):
             ev_decay = self.get_decay_percent_num_samples(decay_percent, self.tau_offsets[ev_num])
@@ -893,23 +1018,26 @@ class TestArtificialEventData(EventAndSpikesMaster):
 
         return decay_times
 
-    def get_average_of_all_events(self, biexp=False):
-        average_event = np.zeros(self.event_samples)
-        for ev_num in range(self.num_events()):
-
+    def get_overlay_of_all_events(self, biexp=False):
+        events_overlay = np.zeros((self.num_events(), self.event_samples))
+        for idx, ev_num in enumerate(range(self.num_events())):
             if not biexp:
-                ev, __ = self.generate_artificial_spike(self.b1_offsets[ev_num],
-                                                        self.tau_offsets[ev_num])
+                ev, __ = self.generate_artificial_spike(self.b1_offsets[ev_num], self.tau_offsets[ev_num])
             else:
-                ev = self.generate_artificial_biexp_spike(self.b1_offsets[ev_num],
-                                                          self.rise_offsets[ev_num], self.decay_offsets[ev_num])
+                ev = self.generate_artificial_biexp_spike(
+                    self.b1_offsets[ev_num],
+                    self.rise_offsets[ev_num],
+                    self.decay_offsets[ev_num],
+                )
+            events_overlay[idx, :] = ev
+        return events_overlay
 
-            average_event += ev * (1 / self.num_events())
-
+    def get_average_of_all_events(self, biexp=False):
+        events_overlay = self.get_overlay_of_all_events(biexp)
+        average_event = np.mean(events_overlay, axis=0)
         return average_event
 
     def num_events(self, rec=None):
-
         if rec is None:
             event_times = self.peak_times[self.time_type][~np.isnan(self.peak_times[self.time_type])]
         else:
@@ -917,8 +1045,8 @@ class TestArtificialEventData(EventAndSpikesMaster):
 
         return event_times.size
 
-# Insert events into data
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Insert events into data
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
     def fill_im_array_with_events(self):
         """
@@ -933,7 +1061,6 @@ class TestArtificialEventData(EventAndSpikesMaster):
         decay_offsets = []
         area_under_curves = []
         for rec in range(self.num_recs):
-
             rec_b1_offsets = []
 
             for col in range(self.max_num_spikes):
@@ -946,19 +1073,26 @@ class TestArtificialEventData(EventAndSpikesMaster):
                         tau_offset = (1 / np.random.randint(1, 10)) if self.vary_amplitudes_and_tau else 1
 
                         event, area_under_curve = self.generate_artificial_spike(b1_offset, tau_offset)
-                        self.im_array[rec, idx:idx + self.event_samples] = event
+                        self.im_array[rec, idx : idx + self.event_samples] = event
 
                         tau_offsets.append(tau_offset)
                         area_under_curves.append(area_under_curve)
 
                     elif self.event_type == "biexp":
-
                         b1_offset = 10  #
-                        rise_and_decay_offset = (np.random.choice([0.05, 0.3, 0.9], 1)) if self.vary_amplitudes_and_tau else 1  # restrict to 3 options for 3 template tests
+                        rise_and_decay_offset = (
+                            (np.random.choice([0.05, 0.3, 0.9], 1)) if self.vary_amplitudes_and_tau else 1
+                        )  # restrict to 3 options for 3 template tests
 
-                        event = self.generate_artificial_biexp_spike(b1_offset, rise_and_decay_offset / self.rise_div, rise_and_decay_offset)
-                        self.im_array[rec, idx:idx + self.event_samples] = event
-                        self.im_array[rec][idx] = self.resting_im + 0.001  # so baseline position is detected correctly for event fit start
+                        event = self.generate_artificial_biexp_spike(
+                            b1_offset,
+                            rise_and_decay_offset / self.rise_div,
+                            rise_and_decay_offset,
+                        )
+                        self.im_array[rec, idx : idx + self.event_samples] = event
+                        self.im_array[rec][idx] = (
+                            self.resting_im + 0.001
+                        )  # so baseline position is detected correctly for event fit start
 
                         rise_offsets.append(rise_and_decay_offset / self.rise_div)
                         decay_offsets.append(rise_and_decay_offset)
@@ -978,19 +1112,28 @@ class TestArtificialEventData(EventAndSpikesMaster):
             self.rise_offsets = np.array(rise_offsets)
             self.decay_offsets = np.array(decay_offsets)
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # Artificial Ri Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-class TestArtificialRiData(GenerateArtificialData):
-    """
 
-    """
+class TestArtificialRiData(GenerateArtificialData):
+    """ """
+
     def __init__(self, num_recs=75):
         super().__init__(num_recs)
 
         self.sag_hump_amplitude = 10
-        self.sag_hump_idx = int(np.floor((((self.num_samples / self.time_stop)*self.stop_time) - (self.num_samples / self.time_stop)*self.start_time))/2)
+        self.sag_hump_idx = int(
+            np.floor(
+                (
+                    ((self.num_samples / self.time_stop) * self.stop_time)
+                    - (self.num_samples / self.time_stop) * self.start_time
+                )
+            )
+            / 2
+        )
         self.sag_hump_peaks = utils.np_empty_nan((self.num_recs, 1))
         self.peak_deflections = utils.np_empty_nan(self.num_recs)
 
@@ -1002,11 +1145,10 @@ class TestArtificialRiData(GenerateArtificialData):
 
     def insert_injection_to_vm_arrays(self):
         for rec in range(0, self.num_recs):
-            self.vm_array[rec][self.start_idx:self.stop_idx] += self.injection_[rec]
+            self.vm_array[rec][self.start_idx : self.stop_idx] += self.injection_[rec]
 
     def add_in_sag_hump(self):
         for rec in range(0, self.num_recs):
-
             if self.current_injection_amplitude[rec] > 0:
                 self.vm_array[rec][self.sag_hump_idx] = self.vm_array[rec][self.sag_hump_idx] + self.sag_hump_amplitude
                 self.sag_hump_peaks[rec] = self.sag_hump_amplitude
@@ -1023,12 +1165,17 @@ class TestArtificialRiData(GenerateArtificialData):
     def gen_cum_inj_start_stop_time(self):
         cumu_injection_start_stoptimes = utils.np_empty_nan((self.num_recs, 2))
         for rec in range(0, self.num_recs):
-            cumu_injection_start_stoptimes[rec] = [self.start_time + self.cum_min_max_time[0][0], self.stop_time + self.cum_min_max_time[0][0]]
+            cumu_injection_start_stoptimes[rec] = [
+                self.start_time + self.cum_min_max_time[0][0],
+                self.stop_time + self.cum_min_max_time[0][0],
+            ]
         return cumu_injection_start_stoptimes
 
+
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-# Artificial Data Manipulation Class 
+# Artificial Data Manipulation Class
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 class TestDataTools(GenerateArtificialData):
     def __init__(self, num_recs):
@@ -1036,8 +1183,7 @@ class TestDataTools(GenerateArtificialData):
 
         self.n_freqs = utils.np_empty_nan((self.num_recs, 1))
         self.hz_to_add = []
-        self.vm_array = utils.np_empty_nan((self.num_recs,
-                                            self.num_samples))
+        self.vm_array = utils.np_empty_nan((self.num_recs, self.num_samples))
 
         self.generate_test_frequency_spectra()
 
@@ -1054,10 +1200,9 @@ class TestDataTools(GenerateArtificialData):
         for rec in range(self.num_recs):
             x = np.linspace(0, 2 * np.pi, self.num_samples)
             rec_n_freqs = int((freq_near_nyquist / dist) - 1)
-            rec_hz_to_add = test_utils.random_int_with_minimum_distance(min_val=0,
-                                                                        max_val=freq_near_nyquist,
-                                                                        n=rec_n_freqs,
-                                                                        min_distance=dist)
+            rec_hz_to_add = test_utils.random_int_with_minimum_distance(
+                min_val=0, max_val=freq_near_nyquist, n=rec_n_freqs, min_distance=dist
+            )
             y = np.zeros(self.num_samples)
             for hz in rec_hz_to_add:
                 y = y + np.sin(x * hz)
@@ -1066,18 +1211,15 @@ class TestDataTools(GenerateArtificialData):
             self.n_freqs[rec] = rec_n_freqs
             self.hz_to_add.append(rec_hz_to_add)
 
+
 class TestSingleSineWave:
     def __init__(self):
-
         self.num_samples = 8000
 
     def generate_sine(self, freq, amplitude):
-        """
-        """
+        """ """
         offset = 0
-        sin_x = np.linspace(0,
-                            2 * np.pi / freq,
-                            self.num_samples+1)
+        sin_x = np.linspace(0, 2 * np.pi / freq, self.num_samples + 1)
         sin_y = np.sin(sin_x * freq) * amplitude
         fs = core_analysis_methods.calc_fs(sin_x)
         ts = 1 / fs
@@ -1094,3 +1236,50 @@ class TestSingleSineWave:
             "num_samples": self.num_samples,
         }
         return sin_x, sin_y, fs, ts, params, idxs
+
+
+def get_simple_known_event_data():
+    # improve docs here and on the
+    # num_left_edge_samples = 0, window_length_samples = 5
+    # here the left edge is 0 and the right edge is num samples ( 5)
+    #                    0  1  2  3  4  5  6  7  8  9   10  11  12  13  14  15  16   17   18   19   20   21 22 23 24
+    im_array = np.array([0, 0, 5, 4, 3, 2, 1, 0, 0, 50, 40, 30, 20, 10, 0,  0,  500, 400, 300, 200, 100, 0, 0, 0, 0])
+    im_array = np.vstack([im_array, im_array * 1000])
+
+    event_info = [
+        {
+            "2": {
+                "peak": {"idx": 2},
+                "baseline": {"idx": 3},
+                "half_width": {"rise_mid_idx": 3},
+            },
+            "9": {
+                "peak": {"idx": 9},
+                "baseline": {"idx": 11},
+                "half_width": {"rise_mid_idx": 12},
+            },
+            "16": {
+                "peak": {"idx": 16},
+                "baseline": {"idx": 19},
+                "half_width": {"rise_mid_idx": 20},
+            },
+        },
+        {
+            "2": {
+                "peak": {"idx": 2},
+                "baseline": {"idx": 3},
+                "half_width": {"rise_mid_idx": 3},
+            },
+            "9": {
+                "peak": {"idx": 9},
+                "baseline": {"idx": 11},
+                "half_width": {"rise_mid_idx": 12},
+            },
+            "16": {
+                "peak": {"idx": 16},
+                "baseline": {"idx": 19},
+                "half_width": {"rise_mid_idx": 20},
+            },
+        },
+    ]
+    return im_array, event_info
