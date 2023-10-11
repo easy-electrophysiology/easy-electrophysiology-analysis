@@ -5,6 +5,7 @@ from utils import utils
 # Tests move - was moved from test_spikecalc
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
+
 def random_int_with_minimum_distance(min_val, max_val, n, min_distance, avoid_range=False):
     """
     Create an array of random integers of length n separated by a minimum distance.
@@ -24,8 +25,9 @@ def random_int_with_minimum_distance(min_val, max_val, n, min_distance, avoid_ra
 
         if avoid_range:
             # use for generating test spikes, dont let them be too close to boudns
-            if ((rand_nums > min_bound - dist) & (rand_nums < min_bound + dist)).any() or \
-                    ((rand_nums > max_bound - dist) & (rand_nums < max_bound + dist)).any():
+            if ((rand_nums > min_bound - dist) & (rand_nums < min_bound + dist)).any() or (
+                (rand_nums > max_bound - dist) & (rand_nums < max_bound + dist)
+            ).any():
                 continue
 
         max_difference = np.abs(np.min(np.diff(rand_nums)))
@@ -33,6 +35,7 @@ def random_int_with_minimum_distance(min_val, max_val, n, min_distance, avoid_ra
             break
 
     return rand_nums
+
 
 def vals_within_bounds(array, lower_bound, upper_bound, fill=np.nan):
     """
@@ -51,9 +54,12 @@ def vals_within_bounds(array, lower_bound, upper_bound, fill=np.nan):
         if isinstance(bound, np.ndarray) and len(np.shape(bound)) == 1:
             bounds[key] = np.reshape(bound, (len(bound), 1))
 
-    logical_mask = np.logical_and(bounds["lower"] <= array, array <= bounds["upper"])  # [inclusive, exclusive] to match current_calcs
+    logical_mask = np.logical_and(
+        bounds["lower"] <= array, array <= bounds["upper"]
+    )  # [inclusive, exclusive] to match current_calcs
     masked_array = np.ma.masked_array(array, ~logical_mask, fill_value=fill).filled()
     return masked_array
+
 
 def generate_test_frequency_spectra(fs=16384, dist=1000):
     """
@@ -64,17 +70,20 @@ def generate_test_frequency_spectra(fs=16384, dist=1000):
     TODO: very similar to generate_artificial_data.generate_test_frequency_spectra()
     """
     freq_near_nyquist = (fs / 2) * 0.95  # dont insert freqs too close to nyquist
-    n_freqs = int((freq_near_nyquist/dist)-1)
-    hz_to_add = random_int_with_minimum_distance(min_val=10,  # too low gets strange resutls when testing filter
-                                                 max_val=freq_near_nyquist,
-                                                 n=n_freqs,
-                                                 min_distance=dist)
+    n_freqs = int((freq_near_nyquist / dist) - 1)
+    hz_to_add = random_int_with_minimum_distance(
+        min_val=10,  # too low gets strange resutls when testing filter
+        max_val=freq_near_nyquist,
+        n=n_freqs,
+        min_distance=dist,
+    )
     x = np.linspace(0, 2 * np.pi, fs)
     y = np.zeros(fs)
     for hz in hz_to_add:
         y = y + np.sin(x * hz)
 
     return y, hz_to_add, fs, dist, n_freqs
+
 
 def get_spike_times_from_spike_info(test_spkcnt, spike_info, param_type="times"):
     """
@@ -89,5 +98,5 @@ def get_spike_times_from_spike_info(test_spkcnt, spike_info, param_type="times")
                 param = [float(spike[1][0]) for spike in rec_spikes.items() if rec_spikes]
             elif param_type == "idx":
                 param = [int(spike[1][1]) for spike in rec_spikes.items() if rec_spikes]
-            spike_param[idx, 0:len(param)] = param
+            spike_param[idx, 0 : len(param)] = param
     return spike_param

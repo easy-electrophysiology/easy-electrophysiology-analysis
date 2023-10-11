@@ -1,18 +1,24 @@
-from PySide2 import QtWidgets, QtCore, QtGui
+from PySide6 import QtWidgets, QtCore, QtGui
 import numpy as np
 from utils import utils
-from ephys_data_methods import core_analysis_methods, event_analysis_master, voltage_calc
+from ephys_data_methods import (
+    core_analysis_methods,
+    event_analysis_master,
+    voltage_calc,
+)
 import numpy as np
 from numpy import *
 
-def sliding_window(data,
-                   width_s,
-                   rise,
-                   decay,
-                   ts,
-                   downsample,
-                   min_chunk_factor,
-                   ):
+
+def sliding_window(
+    data,
+    width_s,
+    rise,
+    decay,
+    ts,
+    downsample,
+    min_chunk_factor,
+):
     """
     Vectorised sliding window that passes data (typically sEPSC trace) and:
 
@@ -45,7 +51,7 @@ def sliding_window(data,
                           2  - 5.73
     """
     all_y = data[0]
-    W = int(width_s/ts)
+    W = int(width_s / ts)
 
     # Split the data indicies up based on
     # the chunk_factor
@@ -70,7 +76,6 @@ def sliding_window(data,
 
     num_chunks = len(idx_split)
     for i in range(num_chunks):
-
         idx = idx_split[i]
         y = all_y[idx]
         samples_in_chunk = len(idx)
@@ -121,8 +126,7 @@ def sliding_window(data,
 
         # Fit the free b0 and b1 parameters of this biexpotential function
         # to every window on the dataset. Assign the outputs to the chunks idx.
-        X = np.hstack([np.ones((W, 1)),
-                       template])
+        X = np.hstack([np.ones((W, 1)), template])
 
         all_betas[:, idx] = np.linalg.inv(X.T @ X) @ X.T @ y
         yhat = all_betas[0, idx] + all_betas[1, idx] * template
@@ -131,12 +135,15 @@ def sliding_window(data,
         # data at every window. Assign the outputs to the chunks idx.
         all_corr[idx] = vectorised_pearsons(y, yhat)
 
-    if downsample["on"]:  # remove all nans from over-initialised array, instead cut window off after interp in calling function
+    if downsample[
+        "on"
+    ]:  # remove all nans from over-initialised array, instead cut window off after interp in calling function
         all_corr = all_corr[~np.isnan(all_corr)]
         all_betas = all_betas[:, ~np.isnan(all_betas)[0]]
         return all_corr, all_betas
 
     return all_corr, all_betas
+
 
 def vectorised_pearsons(y, yhat):
     """
@@ -149,11 +156,12 @@ def vectorised_pearsons(y, yhat):
     y_bar = np.mean(y, axis=0)
     yhat_bar = np.mean(yhat, axis=0)
     numerator = np.sum((y - y_bar) * (yhat - yhat_bar), axis=0) / len(y)
-    demoninator = (np.std(y, axis=0) * np.std(yhat, axis=0))
+    demoninator = np.std(y, axis=0) * np.std(yhat, axis=0)
     demoninator[demoninator == 0] = np.finfo(float).eps
     r = numerator / demoninator
 
     return r
+
 
 def clements_bekkers(data, template):
     """
@@ -170,19 +178,20 @@ def clements_bekkers(data, template):
     sumT2 = (T**2).sum()
     sumD = rolling_sum(D, N)
     sumD2 = rolling_sum(D**2, N)
-    sumTD = np.correlate(D, T, mode='valid')
+    sumTD = np.correlate(D, T, mode="valid")
 
     # compute scale factor, offset at each location:
     scale = (sumTD - sumT * sumD / N) / (sumT2 - sumT**2 / N)
     offset = (sumD - scale * sumT) / N
 
     # compute SSE at every location
-    SSE = sumD2 + scale**2 * sumT2 + N * offset**2 - 2 * (scale*sumTD + offset*sumD - scale*offset*sumT)
+    SSE = sumD2 + scale**2 * sumT2 + N * offset**2 - 2 * (scale * sumTD + offset * sumD - scale * offset * sumT)
 
     # finally, compute error and detection criterion
-    error = sqrt(SSE / (N-1))
+    error = sqrt(SSE / (N - 1))
     DC = scale / error
     return DC, scale, offset
+
 
 def rolling_sum(data, n):
     """
@@ -191,7 +200,6 @@ def rolling_sum(data, n):
     """
     d1 = np.cumsum(data)
     d2 = np.empty(len(d1) - n + 1, dtype=data.dtype)
-    d2[0] = d1[n-1]  # copy first point
+    d2[0] = d1[n - 1]  # copy first point
     d2[1:] = d1[n:] - d1[:-n]  # subtract
     return d2
-

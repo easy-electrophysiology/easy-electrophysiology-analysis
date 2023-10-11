@@ -1,6 +1,6 @@
-from PySide2 import QtWidgets, QtCore, QtGui
-from PySide2 import QtTest
-from PySide2.QtTest import QTest
+from PySide6 import QtWidgets, QtCore, QtGui
+from PySide6 import QtTest
+from PySide6.QtTest import QTest
 import pytest
 import sys
 import os
@@ -8,11 +8,13 @@ import pandas as pd
 import numpy as np
 import time
 import keyboard
+
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/.."))
 sys.path.append(os.path.realpath(os.path.dirname(__file__) + "/."))
-sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), 'easy_electrophysiology'))
-from ..easy_electrophysiology import easy_electrophysiology
-MainWindow = easy_electrophysiology.MainWindow
+sys.path.append(os.path.join(os.path.realpath(os.path.dirname(__file__) + "/.."), "easy_electrophysiology"))
+import easy_electrophysiology.easy_electrophysiology
+
+from easy_electrophysiology.mainwindow.mainwindow import MainWindow
 from setup_test_suite import GuiTestSetup
 
 
@@ -20,9 +22,10 @@ class TestConfigs:
     """
     Check the relevant widgets are properly disabled on startup (before a file is loaded).
     """
+
     @pytest.fixture(scope="function", autouse=True)
     def tgui(test):
-        tgui = GuiTestSetup('artificial')
+        tgui = GuiTestSetup("artificial")
         tgui.setup_mainwindow(show=True)
         tgui.raise_mw_and_give_focus()
         yield tgui
@@ -121,7 +124,7 @@ class TestConfigs:
     def quick_setup_file(self, tgui):
         tgui.test_update_fileinfo()
         tgui.speed = "fast"  # this has no effect here
-        tgui.setup_artificial_data('normalised')
+        tgui.setup_artificial_data("normalised")
 
     @pytest.mark.parametrize("load_or_save", ["load", "save"])
     @pytest.mark.parametrize("analysis_type", ["events_template_matching", "events_thresholding"])
@@ -131,7 +134,9 @@ class TestConfigs:
 
         Only test when it shouldnt be shown - check messagebox is shown.
         """
-        action = tgui.mw.mw.actionLoad_Events_Analysis if load_or_save == "load" else tgui.mw.mw.actionSave_Events_Analysis
+        action = (
+            tgui.mw.mw.actionLoad_Events_Analysis if load_or_save == "load" else tgui.mw.mw.actionSave_Events_Analysis
+        )
 
         assert not action.isEnabled()
 
@@ -152,6 +157,8 @@ class TestConfigs:
         action.trigger()
 
     def check_cannot_load_save_events_messagebox_is_shown(self, tgui):
-
-        assert tgui.mw.messagebox.text() == "<p align='center'>Can only Load / Save Events when Events - Template or Events - Thresholding analysis is selected</p>"
+        assert (
+            tgui.mw.messagebox.text()
+            == "<p align='center'>Can only Load / Save Events when Events - Template or Events - Thresholding analysis is selected</p>"
+        )
         tgui.mw.messagebox.close()
