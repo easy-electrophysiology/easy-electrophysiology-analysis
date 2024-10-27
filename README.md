@@ -1,4 +1,4 @@
-Copyright (C) 2020-2021, Joseph J Ziminski.
+Copyright (C) 2020-2024, Joseph J Ziminski.
 
 Analysis code for Easy Electrophysiology software.
 See www.easyelectrophysiology.com for all news and updates
