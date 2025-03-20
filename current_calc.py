@@ -28,457 +28,6 @@ if TYPE_CHECKING:
     from configs.configs import ConfigsClass
     from custom_types import FalseOrFloat, Info, Int, NpArray64
     from importdata import RawData
-    from numpy.typing import NDArray
-
-# --------------------------------------------------------------------------------------
-# Spike Counting Methods - Automatically Detect Spikes
-# --------------------------------------------------------------------------------------
-
-
-def auto_find_spikes(
-    data: RawData,
-    thr: Dict,
-    rec_from: Int,
-    rec_to: Int,
-    time_bounds: Union[Literal[False], List[List]],
-    bound_start_or_stop: Union[Literal[False], List[str]],
-) -> Info:
-    """
-    Calculate spike threshold per record based on options specified in
-    configurations. Returns list of dicts (see find_spikes_above_record_threshold()).
-
-    There are two methods to find spikes. One is a per-spike method based on
-    time bounds and derivative thresholds. The second is to take any part of
-    the time series that rises and falls over a pre-defined threshold and call
-    it a spike.
-
-    Here, spikes_from_auto_threshold_per_record will first use the per-spike
-    method to find all possible spikes based on the thresholds. Then it will
-    average the half-amplitudes and use the vm as a pre-defined threshold,
-    anything over which is called a spike. This is less refined than the
-    per-spike method alone but will not throw up any random spikes.
-
-    Alternatively, the spikes_from_auto_threshold_per_spike method just returns the
-    results of the per-spike method.
-
-
-    INPUT: data:               object containing vm to analyse
-           thr:                a dictionary of various thresholding values for
-                               automatic spike count detection (see configs)
-               thr["auto_thr_amp"] - minimum amplitude of spikes to be used in
-                                     threshold calculation
-               thr["auto_thr_rise"] - threshold of the first derivative in the
-                                      positive direction for spikes to be used in
-                                      threshold calculation in ms
-               thr["auto_thr_fall"] - threshold of the first derivative for spikes
-                                      the negative direction spikes to be used in
-                                      threshold calculation in ms
-               thr["auto_thr_width"] - region to search for first deriv pass negative
-                                       threshold after passing positive threshold in ms.
-           rec_from:     rec to analyse from
-           rec_to:       rec to analyse to
-           time_bounds:  boundary to analyse within, specified in seconds
-           bounds_start_or_stop: whether "time_bounds" bounds are start or stop (e.g.
-           ["start", "stop"])
-    """
-    upper_inclusive_rec_bound = rec_to + 1
-    search_region_in_s = thr["auto_thr_width"] / 1000
-    thr["N"] = core_analysis_methods.quick_get_time_in_samples(data.ts, search_region_in_s)
-
-    # Find Spike Threshold per Record
-    if thr["threshold_type"] == "auto_record":
-        spike_info = spikes_from_auto_threshold_per_record(
-            data, rec_from, rec_to, thr, time_bounds, bound_start_or_stop
-        )
-    if thr["threshold_type"] == "auto_spike":
-        spike_info = spikes_from_auto_threshold_per_spike(
-            data,
-            rec_from,
-            upper_inclusive_rec_bound,
-            thr,
-            time_bounds,
-            bound_start_or_stop,
-        )
-
-    return spike_info
-
-
-# Auto - thresholding
-# --------------------------------------------------------------------------------------
-
-
-def spikes_from_auto_threshold_per_record(
-    data: RawData,
-    rec_from: Int,
-    rec_to: Int,
-    thr: Dict,
-    time_bounds: Union[Literal[False], List[List]],
-    bound_start_or_stop: Union[Literal[False], List[str]],
-) -> Info:
-    """
-    For every spike in the record find Vm that is 50% spike peak. Average
-    across these to create a "threshold" for this record, only use spikes
-    that are above the user-specified spike amplitude threshold.
-
-    thr: dictionary containing information about AP threshold
-         "N": thr["auto_thr_width"] in samples
-
-    See auto_find_spikes() for other inputs
-    """
-    upper_inclusive_rec_bound = rec_to + 1
-
-    thresholds = utils.np_empty_nan(data.num_recs)
-    for rec in range(rec_from, upper_inclusive_rec_bound):
-        vm = data.vm_array[rec]
-        vm_diff = data.norm_first_deriv_vm[rec]
-
-        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
-        (
-            time_bound_start_sample,
-            time_bound_stop_sample,
-        ) = get_bound_times_in_sample_units(rec_time_bounds, bound_start_or_stop, data, rec)
-        candidate_spikes_idx = find_candidate_spikes(vm_diff, thr, time_bound_start_sample, time_bound_stop_sample)
-
-        if candidate_spikes_idx.any():
-            (peak_vms, thr_vms, __, __,) = clean_and_amplitude_thr_candidate_spikes_and_extract_parameters(
-                vm, candidate_spikes_idx, thr, rec_time_array=data.time_array[rec]
-            )
-            thresholds[rec] = (np.median(peak_vms) + np.median(thr_vms)) / 2
-        else:
-            thresholds[rec] = np.nan
-
-    # If no spike in rec, uses the average of all thresholds as threshold
-    if not np.all(np.isnan(thresholds)):
-        mean_thr = np.nanmean(thresholds[rec_from:upper_inclusive_rec_bound])
-        thresholds[np.isnan(thresholds)] = mean_thr
-
-    spike_info = find_spikes_above_record_threshold(
-        data, thresholds, rec_from, rec_to, time_bounds, bound_start_or_stop
-    )
-
-    return spike_info
-
-
-def spikes_from_auto_threshold_per_spike(
-    data: RawData,
-    rec_from: Int,
-    upper_inclusive_rec_bound: Int,
-    thr: Dict,
-    time_bounds: Union[Literal[False], List[List]],
-    bound_start_or_stop: Union[Literal[False], List[str]],
-) -> Info:
-    """
-    Find APs from auto-thresholding without further robust thresholding based on
-    detected APs.
-
-    see auto_find_spikes() for inputs
-    """
-    spike_info: Info
-    spike_info = [[] for __ in range(data.num_recs)]
-
-    for rec in range(rec_from, upper_inclusive_rec_bound):
-        vm = data.vm_array[rec]
-        vm_diff = data.norm_first_deriv_vm[rec]
-
-        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
-        (
-            time_bound_start_sample,
-            time_bound_stop_sample,
-        ) = get_bound_times_in_sample_units(rec_time_bounds, bound_start_or_stop, data, rec)
-        candidate_spikes_idx = find_candidate_spikes(vm_diff, thr, time_bound_start_sample, time_bound_stop_sample)
-
-        if candidate_spikes_idx.any():
-            (peak_vms, __, peak_idxs, peak_times,) = clean_and_amplitude_thr_candidate_spikes_and_extract_parameters(
-                vm, candidate_spikes_idx, thr, rec_time_array=data.time_array[rec]
-            )
-
-            if peak_vms.any():
-                spike_info[rec] = {}
-                for peak_vm, peak_time, peak_sample in zip(peak_vms, peak_times, peak_idxs):
-                    dict_key = str(peak_time)
-                    spike_info[rec][dict_key] = [peak_vm, peak_sample]  # type: ignore
-            else:
-                spike_info[rec] = 0
-        else:
-            spike_info[rec] = 0
-
-    return spike_info
-
-
-# Search for within-threshold spikes
-# --------------------------------------------------------------------------------------
-
-
-def find_candidate_spikes(
-    vm_diff: NpArray64,
-    thr: Dict,
-    time_bound_start_sample: Int,
-    time_bound_stop_sample: Int,
-) -> NpArray64:
-    """
-    Find candidate spikes based on user-specified thresholds, fully vectorised for
-    speed.
-
-    INPUTS:
-        vm_diff: first derivative per unit time,
-                 see spikes_from_auto_threshold_per_record() for thr
-
-    For each record take the 1st derivative of the trace and find a timeperiod length
-    N which contains an increase in diff above the positive threshold followed by a
-    decreased below the negative threshold
-
-    Where ix is a sample over the differential threshold, finds all instances where
-    within the range x : x + N there is  also a point under diff threshold.
-
-    Deletes instances where x increases by 1 i.e.
-    x:x+N, x+1:x+1, x+2:x+N because these
-    are repeat instances of the same spike.
-    """
-    samples_above = np.where(vm_diff > thr["auto_thr_rise"])[0].squeeze()
-    samples_above = samples_above[
-        samples_above >= int(time_bound_start_sample + thr["N"])
-    ]  # only consider points within boundary
-    samples_above = samples_above[samples_above < int(time_bound_stop_sample - thr["N"])]
-
-    samples_below = np.where(vm_diff < thr["auto_thr_fall"])[0].squeeze()
-    samples_below = samples_below[samples_below >= int(time_bound_start_sample + thr["N"])]
-    samples_below = samples_below[samples_below < int(time_bound_stop_sample - thr["N"])]
-
-    # make a sample x N array for every sample above thr
-    n_samples_above = utils.np_empty_nan((len(samples_above), thr["N"]))
-    n_samples_above[:, :] = np.linspace(samples_above, samples_above + thr["N"] - 1, thr["N"]).transpose()
-    n_samples_above.astype(int)
-
-    # for the indicies sample_above + N, check if any contains a below thr instance
-    idx = np.isin(n_samples_above, samples_below).any(axis=1)
-    candidate_spikes_idx = n_samples_above[idx]
-
-    return candidate_spikes_idx
-
-
-def clean_and_amplitude_thr_candidate_spikes_and_extract_parameters(
-    vm: NpArray64,
-    candidate_spikes_idx: NpArray64,
-    thr: Dict,
-    rec_time_array: NpArray64,
-) -> Tuple[NpArray64, ...]:
-    """
-    Based on matrix (spike x N) of indices, index out vm leaving a
-    matrix of spike values in vm units, fully vectorised.
-
-    A problem with find_candidate_spikes() method is that because is it
-    single-index based it will return multiple candidate spikes from the
-    same spike. e.g. threshold - end, threshold + 1 - end.
-
-    Here we must delete all of these repeats from the same spike by
-    deleting candidate spikes with cumulatively increasing first
-    indices.
-
-    Amplitude thresholding is also conducted here.
-    """
-    # clean repeats which are from the same spike
-    clean_repeats = np.diff(candidate_spikes_idx[:, 0], prepend=0)
-    del_ = np.where(clean_repeats == 1)
-    candidate_spikes_idx = np.delete(candidate_spikes_idx, del_, axis=0).astype(int)
-
-    # find spikes above the minimum spike amplitude threshold
-    spike_vm_values = vm[candidate_spikes_idx]
-    peak_idx_all = np.argmax(spike_vm_values, axis=1).squeeze()
-    peak_vm_all = np.max(spike_vm_values, axis=1).squeeze()
-
-    # idx in units of raw data,
-    peak_idxs_all = candidate_spikes_idx[np.arange(np.size(peak_idx_all)), peak_idx_all].squeeze()
-    thr_idx_all = candidate_spikes_idx[:, 0]
-    thr_vm_all = vm[thr_idx_all].squeeze()
-
-    spike_amplitudes_all = (peak_vm_all - thr_vm_all).squeeze()
-    spikes_above_thr = spike_amplitudes_all > np.array(thr["auto_thr_amp"])
-
-    peak_vms = peak_vm_all[spikes_above_thr]
-    thr_vms = thr_vm_all[spikes_above_thr]
-    peak_idxs = peak_idxs_all[spikes_above_thr]
-    peak_times = rec_time_array[peak_idxs]
-
-    return peak_vms, thr_vms, peak_idxs, peak_times
-
-
-# Find Spikes Above Set Threshold
-# --------------------------------------------------------------------------------------
-
-
-def find_spikes_above_record_threshold(
-    data: RawData,
-    thresholds: NpArray64,
-    rec_from: Int,
-    rec_to: Int,
-    time_bounds: Union[Literal[False], List[List]],
-    bound_start_or_stop: Union[Literal[False], List[str]],
-) -> Info:
-    """
-    Finds the time, peak and idx of all spikes above a thresholds for each record in
-    the file. Returns as a list of dicts "spike_info" containing
-    information about each spike.
-
-    Cuts the trace down in-between bounds to optimise speed.
-
-    NOTE: one current issue that a spike may be counted if the decay is sliced in two.
-
-    INPUT: data:         data object class
-           thresholds:    thresholds over which to measure spikes. Can be single
-                         thresholds (applied to all records), or a
-                         array of thresholds (per record)
-           rec_from:     rec to analyse from
-           rec_to:       rec to analyse to
-           time_bounds:  boundary to analyse within, specified in seconds
-
-    OUTPUT: spike_info:  A list of records with entry [] for rec not analysed,
-                         0 for analysed and no spikes, or a dictionary with
-                         the spike time (S) as key, containing a list [spike_peak_vm,
-                         spike_idx].
-    """
-    upper_inclusive_rec_bound = rec_to + 1
-
-    spike_info: Info
-    spike_info = [[] for rec in range(data.num_recs)]
-
-    # cut vm and time down to time period to be analysed
-
-    all_time_bound_start_sample = utils.np_empty_nan(data.num_recs)
-
-    bound_vm_array = [np.array([]) for __ in range(data.num_recs)]
-    bound_time_array = [np.array([]) for __ in range(data.num_recs)]
-    for rec in range(data.num_recs):
-        rec_time_bounds = [time_bounds[0][rec], time_bounds[1][rec]] if time_bounds is not False else False
-        (
-            time_bound_start_sample,
-            time_bound_stop_sample,
-        ) = get_bound_times_in_sample_units(rec_time_bounds, bound_start_or_stop, data, rec)
-        all_time_bound_start_sample[rec] = time_bound_start_sample
-
-        bound_vm_array[rec] = data.vm_array[rec, time_bound_start_sample : time_bound_stop_sample + 1]
-        bound_time_array[rec] = data.time_array[rec, time_bound_start_sample : time_bound_stop_sample + 1]
-
-    # Count Spikes
-    # get vector of vm indices above thresholds (with length either 1 when thresholds
-    # manual set or len(recs) when thresholds autoset), otherwise nan
-    if np.size(thresholds) == 1:
-        thresholds = np.tile(thresholds, (data.num_recs, 1))
-
-    above_threshold_vm_matrix = [[] for __ in range(data.num_recs)]
-    for rec in range(rec_from, upper_inclusive_rec_bound):
-        above_threshold_vm_matrix[rec] = np.ma.masked_array(
-            bound_vm_array[rec],
-            np.invert(bound_vm_array[rec] > thresholds[rec]),
-            fill_value=np.nan,
-        ).filled()
-
-    # Find contiguous above-threshold regions and get peak information of these regions
-    for rec in range(rec_from, upper_inclusive_rec_bound):
-        cum_ap_index = index_out_continuous_above_threshold_samples(above_threshold_vm_matrix[rec])
-
-        # get indexed vm and time of > thr vm
-        peaks_idx = get_peaks_idx_from_cum_idx(cum_ap_index, bound_vm_array[rec], event_dir="positive")
-
-        # Using peak indices, save the vm peak, its time and idx
-        # into a dict where key is the time of spike
-        if np.any(peaks_idx):
-            spike_info[rec] = {}
-            for peak_idx, peak_time, peak_vm in zip(
-                peaks_idx,
-                bound_time_array[rec][peaks_idx],
-                bound_vm_array[rec][peaks_idx],
-            ):
-                spike_info[rec][str(peak_time)] = [  # type: ignore
-                    peak_vm,
-                    peak_idx + all_time_bound_start_sample[rec].astype(int),
-                ]  # add back the first bound
-        else:
-            spike_info[rec] = 0
-
-    return spike_info
-
-
-def index_out_continuous_above_threshold_samples(
-    binary_ts: Union[List[NpArray64], NpArray64], smooth: Optional[Int] = None
-) -> NpArray64:
-    """
-    Create an vector of length = number of samples where each spike is batched to a
-    cumulative index i.e [00011100022200033],
-    0 when data < thr or cumsum > 1...N spikes are above threshold
-
-    INPUTS:
-    binary_ts (binary timeseries) : 1 x N samples of zero or 1, where period
-                                    of 1s represent a continuous event of
-                                    which we are interested in the peak
-                                    (e.g. a spike, event)
-
-    smooth : smooth across the binary vector with window length ( FALSE OR INT)
-             useful for events rather than spikes, where the
-             odd sample may not be above threshold e.g.
-             [0 0 0 (event starts) 1 1 1 1 1 1 1 0 0 1 1 1 1 1 (
-             event ends) 0 0 0 0 0 ]
-    """
-    ii = np.zeros((len(binary_ts), 1))
-    jj = np.invert(np.isnan(binary_ts))
-    jj = jj.astype(int)
-
-    # smooth any ones by 1 windows width in case of gaps
-    if isinstance(smooth, int):
-        W = smooth
-        box_function = np.concatenate([[0, 0], np.ones(W), [0, 0]])
-        jj = np.convolve(jj, box_function)
-        jj[jj > 0] = 1
-        jj = jj[0 : len(binary_ts)]
-
-    jj = np.hstack((0, jj))  # match diff and ii length
-    diffs = np.ediff1d(jj)
-    jj = np.delete(jj, 0)
-    start_indx = np.where(diffs == 1)
-    ii[start_indx] = 1
-    cum_index = np.cumsum(ii) * jj
-
-    return cum_index
-
-
-def get_peaks_idx_from_cum_idx(
-    cum_event_index: NpArray64,
-    data_vector: NpArray64,
-    event_dir: Literal["positive", "negative"],
-) -> NDArray[np.integer]:
-    """
-    from a 1 x n array of indices corresponding to contiguous events
-    (e.g. [ 0 0 1 1 1 0 0 2 2 2 ] index out the idx, time and vm/vm
-    for each event into a list. Use for spikes and events.
-
-    cum_event_index: 1D array of cumulatively increasing indices separated by zeros
-                     where each contiguous set of indices indicate an above threshold
-                     event
-    data_vector: List (per rec) of 1D array of Im or Vm data (for event or spike count respectively)
-    event_dir: "positive" or "negative" (i.e. AP, GABA events and glu events
-    respectively)
-
-    use sparse matrix for speed increase
-    """
-    cum_event_index_sparse = fast_indexer(cum_event_index.astype(int))
-
-    idx_ = [row.data for row in cum_event_index_sparse]
-    idx_.pop(0)
-    if event_dir == "positive":
-        peaks_idx = np.array([idx[0] + np.argmax(data_vector[idx]) for idx in idx_])
-    elif event_dir == "negative":
-        peaks_idx = np.array([idx[0] + np.argmin(data_vector[idx]) for idx in idx_])
-    peaks_idx = np.array(peaks_idx).astype(int)
-
-    return peaks_idx
-
-
-def fast_indexer(array: NpArray64) -> NpArray64:
-    """
-    Use spare matrix for indexing an array of mostly zeros for speed.
-    """
-    col_num = np.arange(array.size)
-    return scipy.sparse.csr_matrix((col_num, (array.ravel(), col_num)), shape=(array.max() + 1, array.size))
-
 
 # --------------------------------------------------------------------------------------
 # Spike Parameter Methods
@@ -613,7 +162,7 @@ def calculate_sfa_local_variance_method(
 def calculate_rheobase(
     spike_info: Info,
     single_im_per_rec_values: NpArray64,
-    im_array: NpArray64,
+    secondary_data_array: NpArray64,
     rec_or_exact: Literal["record", "exact"],
     baselines: Optional[NpArray64],
     rec_from: Int,
@@ -625,7 +174,7 @@ def calculate_rheobase(
 
     INPUTS
     single_im_per_rec_values:  If "record" method, a rec x 1 array of average Im
-    im_array: if "exact", the full rec x n_samples Im array
+    secondary_data_array: (typically Im, current clamp) if "exact", the full rec x n_samples Im array
     rec_or_exac:  rheobase method, "record" or "exact"
     baselines: Im baseline to subtract the absolute Im at AP peak from to
                get delta Im
@@ -649,7 +198,7 @@ def calculate_rheobase(
         first_spike_idx = spike_info[first_spike_rec][first_spike_key][1]  # type: ignore
 
         assert baselines is not None, "Type Narrow baselines"
-        rheobase = im_array[first_spike_rec][first_spike_idx] - baselines[rec]
+        rheobase = secondary_data_array[first_spike_rec][first_spike_idx] - baselines[rec]
 
     return rheobase_rec, rheobase
 
@@ -965,13 +514,6 @@ def analyse_spike_kinetics(
              all times returned in S (for plotting), except for fwhm, rise_time and
              decay_time which are in ms (for display on table)
 
-     norm derivatives are calculated as:
-            data.norm_first_deriv_vm = np.diff(rec_vm, append=0) / sample_spacing_in_ms
-            data.norm_second_deriv_vm = np.diff(rec_vm, n=2, append=[0,
-            0]) / sample_spacing_in_ms
-            data.norm_third_deriv_vm = np.diff(rec_vm, n=3, append=[0, 0,
-            0]) / sample_spacing_in_ms
-
     """
     start_idx = convert_time_to_samples(
         start_time,
@@ -982,16 +524,15 @@ def analyse_spike_kinetics(
         add_offset_back=False,
     )
     time_ = data.time_array[rec_idx]
-    vm = data.vm_array[rec_idx]
-    rec_first_deriv = data.norm_first_deriv_vm[rec_idx]
-    rec_second_deriv = data.norm_second_deriv_vm[rec_idx]
-    rec_third_deriv = data.norm_third_deriv_vm[rec_idx]
+    data_array = data.get_primary_data()[rec_idx]
 
-    if not vm.any():
+    if not data_array.any():
         return False
 
+    rec_first_deriv = data.get_norm_first_deriv_data()[rec_idx]
+
     # Peak
-    peak_vm = vm[peak_idx]
+    peak_vm = data_array[peak_idx]
     peak_time = time_[peak_idx]
 
     # check spike-analysis region does not go over edge of rec
@@ -1002,13 +543,16 @@ def analyse_spike_kinetics(
 
     # Calculate threshold and amplitude
     thr_idx = core_analysis_methods.calculate_threshold(
-        rec_first_deriv, rec_second_deriv, rec_third_deriv, start_idx, peak_idx, cfgs
+        rec_first_deriv,
+        start_idx,
+        peak_idx,
+        cfgs,
     )
     if thr_idx is False:
-        return "minimum_thr_to_peak_size_error"
+        return "min_thr_to_peak_size_error"
 
     thr_idx = start_idx + thr_idx
-    thr_vm = vm[thr_idx]
+    thr_vm = data_array[thr_idx]
     thr_time = time_[thr_idx]
     amplitude = peak_vm - thr_vm
 
@@ -1017,7 +561,7 @@ def analyse_spike_kinetics(
         data,
         cfgs.skinetics["fahp_start"] * 1000,
         fahp_stop_time * 1000,
-        vm,
+        data_array,
         time_,
         peak_idx,
         thr_vm,
@@ -1027,20 +571,20 @@ def analyse_spike_kinetics(
         data,
         cfgs.skinetics["mahp_start"] * 1000,
         mahp_stop_time * 1000,
-        vm,
+        data_array,
         time_,
         peak_idx,
         thr_vm,
     )
 
     # Rise, decay and fwhm
-    thr_to_peak_vm = vm[thr_idx : peak_idx + 1]
+    thr_to_peak_vm = data_array[thr_idx : peak_idx + 1]
     thr_to_peak_time = time_[thr_idx : peak_idx + 1]
 
-    # calculate fall to where vm thr crosses or fahp
-    peak_to_end_vm, peak_to_end_time = calculate_peak_to_end(vm, time_, peak_idx, fahp_idx, thr_vm, cfgs)
+    # calculate fall to where data_array thr crosses or fahp
+    peak_to_end_vm, peak_to_end_time = calculate_peak_to_end(data_array, time_, peak_idx, fahp_idx, thr_vm, cfgs)
     if len(peak_to_end_vm) < 3:
-        return "minimum_peak_to_decay_size_error"
+        return "min_peak_to_decay_size_error"
 
     (rise_min_time, rise_min_vm, rise_max_time, rise_max_vm, rise_time,) = core_analysis_methods.calc_rising_slope_time(
         thr_to_peak_vm,
@@ -1091,17 +635,17 @@ def analyse_spike_kinetics(
     output = cfgs.skinetics_params()
     output["thr"] = {
         "time": thr_time,
-        "vm": thr_vm,
+        "data": thr_vm,
         "thr_idx": thr_idx,
     }  # TODO: add to params!!
-    output["peak"] = {"time": peak_time, "vm": peak_vm, "peak_idx": peak_idx}
+    output["peak"] = {"time": peak_time, "data": peak_vm, "peak_idx": peak_idx}
     output["fahp"] = {
         "time": fahp_time,
-        "vm": fahp_vm,
+        "data": fahp_vm,
         "value": fahp,
         "fahp_idx": fahp_idx,
     }
-    output["mahp"] = {"time": mahp_time, "vm": mahp_vm, "value": mahp}
+    output["mahp"] = {"time": mahp_time, "data": mahp_vm, "value": mahp}
     output["fwhm"] = {
         "rise_mid_time": rise_mid_time,
         "rise_mid_vm": rise_mid_vm,
@@ -1123,7 +667,7 @@ def analyse_spike_kinetics(
         "decay_max_vm": decay_max_vm,
         "decay_time_ms": decay_time * 1000,
     }
-    output["amplitude"] = {"vm": amplitude}
+    output["amplitude"] = {"data": amplitude}
 
     output["max_rise"] = {
         "max_slope_ms": rise_max_slope_ms,
@@ -1377,14 +921,14 @@ def get_bound_times_in_sample_units(
         )
     else:
         time_bound_start_sample = 0
-        time_bound_stop_sample = len(data.vm_array[0])
+        time_bound_stop_sample = data.num_samples
 
     return time_bound_start_sample, time_bound_stop_sample
 
 
 def convert_time_to_samples(
     timepoint: Union[float, np.float64, NpArray64],
-    start_or_stop: Literal["start", "stop"],
+    start_or_stop: Optional[Literal["start", "stop"]],
     time_array: NpArray64,
     min_max_time: Optional[NpArray64],
     base_rec: Int,
@@ -1404,7 +948,15 @@ def convert_time_to_samples(
         assert min_max_time is not None, "Type Narrow min_max_time"
         timepoint = timepoint + min_max_time[base_rec][0]
 
-    idx = (np.abs(time_array[base_rec] - timepoint)).argmin()
+    ts = time_array[0][1] - time_array[0][0]
+
+    if timepoint < time_array[base_rec][0]:
+        return 0
+
+    if timepoint > time_array[base_rec][-1]:
+        return time_array[base_rec].size - 1
+
+    idx = int(np.round((timepoint - time_array[base_rec][0]) / ts))
 
     if start_or_stop == "start":
         if time_array[base_rec][idx] < timepoint:

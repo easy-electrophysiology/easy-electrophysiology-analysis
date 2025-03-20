@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import scipy
+from easye_cython_code._vendored.scipy import _peak_finding_utils
 from ephys_data_methods import voltage_calc
 from statsmodels.stats import diagnostic
 from utils import utils
@@ -167,7 +168,7 @@ def fit_curve(
 
     OUTPUT:
         coefs: coefficients for the least-squares fit
-        fit: the function generated wth the coefs
+        fit: the function generated with the coefs
 
     """
     if normalise_time:
@@ -370,14 +371,37 @@ def get_fit_functions(analysis_name: str) -> Callable:
 
 
 # --------------------------------------------------------------------------------------
+# Spike Detection - local maximum period thresholding
+# --------------------------------------------------------------------------------------
+
+
+def exclude_peak_idxs_based_on_local_maximum_period(
+    peak_idxs: NDArray[np.integer], peaks_im: NpArray64, min_distance: Int
+) -> NDArray[np.integer]:
+    """
+    Exclude peaks using SciPy's _select_peak_by_distance algorithm that underpins
+    Scipy's find_peaks `distance` argument. This is used for Template analysis,
+    ensuring distance exclusions are performed similarly for Template and Threshold
+    analysis. It will find the most positive peak, so need to convert if negative
+    events.
+
+    INPUTS
+    ------
+    peak_idxs : Numpy array of event peak indices
+    peaks_im : Numpy array of event peak data values
+    min_distance : minimum distance in samples that must separate peaks
+    """
+    keep = _peak_finding_utils._select_by_peak_distance(peak_idxs.astype(np.intp), peaks_im, float(min_distance))
+    return peak_idxs[keep]  # type: ignore
+
+
+# --------------------------------------------------------------------------------------
 # Spike Kinetics - Thresholding
 # --------------------------------------------------------------------------------------
 
 
 def calculate_threshold(
     rec_first_deriv: NpArray64,
-    rec_second_deriv: NpArray64,
-    rec_third_deriv: NpArray64,
     start_idx: Int,
     peak_idx: Int,
     cfgs: ConfigsClass,
@@ -390,31 +414,53 @@ def calculate_threshold(
     Estimating action potential thresholds from neuronal time-series:
     new metrics and evaluation of methodologies.
     IEEE Trans Biomed Eng. 51(9): 1665-1672.
-    """
-    first_deriv = rec_first_deriv[start_idx:peak_idx]
-    second_deriv = rec_second_deriv[start_idx:peak_idx]
-    third_deriv = rec_third_deriv[start_idx:peak_idx]
 
-    if (np.array([first_deriv.size, second_deriv.size, third_deriv.size]) == 0).any():
+    In practice, the forward difference works best across different
+    sampling rates. The higher order derivatives is only calculated when needed,
+    leading to this nested conditional structure that is suboptimal from
+    a readability perspective. The first derivative is needed for spike
+    detected and is cached on the DataModel.
+    """
+    calc_first_deriv = rec_first_deriv[start_idx : peak_idx + 2]
+    first_deriv = calc_first_deriv[:-2]
+
+    if first_deriv.size == 0:
         return False
 
     if cfgs.skinetics["thr_method"] == "first_deriv":
         idx = first_derivative_threshold(cfgs, first_deriv)
 
-    if cfgs.skinetics["thr_method"] == "third_deriv":
-        idx = third_derviative_threshold(cfgs, third_deriv)
-
-    if cfgs.skinetics["thr_method"] == "method_I":
-        idx = method_i_threshold(cfgs, first_deriv, second_deriv)
-
-    if cfgs.skinetics["thr_method"] == "method_II":
-        idx = method_ii_threshold(cfgs, first_deriv, second_deriv, third_deriv)
-
-    if cfgs.skinetics["thr_method"] == "leading_inflection":
+    elif cfgs.skinetics["thr_method"] == "leading_inflection":
         idx = leading_inflection_threshold(first_deriv)
 
-    if cfgs.skinetics["thr_method"] == "max_curvature":
-        idx = max_curvature_threshold(first_deriv, second_deriv)
+    else:
+        calc_second_deriv = np.diff(calc_first_deriv)
+        second_deriv = calc_second_deriv[:-1]
+
+        if second_deriv.size == 0:
+            return False
+
+        if cfgs.skinetics["thr_method"] == "method_I":
+            idx = method_i_threshold(cfgs, first_deriv, second_deriv)
+
+        elif cfgs.skinetics["thr_method"] == "max_curvature":
+            idx = max_curvature_threshold(first_deriv, second_deriv)
+
+        else:
+            third_deriv = np.diff(calc_second_deriv)
+
+            if third_deriv.size == 0:
+                return False
+
+            if cfgs.skinetics["thr_method"] == "third_deriv":
+                idx = third_derviative_threshold(cfgs, third_deriv)
+
+            elif cfgs.skinetics["thr_method"] == "method_II":
+                idx = method_ii_threshold(cfgs, first_deriv, second_deriv, third_deriv)
+
+            else:
+                raise ValueError("`thr_method` not recognised.")
+
     return idx
 
 
@@ -454,14 +500,21 @@ def method_ii_threshold(
     second_deriv: NpArray64,
     third_deriv: NpArray64,
 ) -> Int:
-    h = ((third_deriv * first_deriv) - (second_deriv**2)) / (first_deriv**3)
-    lower_bound = cfgs.skinetics["method_II_lower_bound"]
-    h[first_deriv <= lower_bound] = np.nan
 
-    if np.all(np.isnan(h)):
+    num = third_deriv * first_deriv - second_deriv**2
+    denom = first_deriv**3
+
+    h = np.divide(num, denom, out=np.zeros_like(num, dtype=np.float64), where=denom != 0)
+
+    lower_bound = cfgs.skinetics["method_II_lower_bound"]
+
+    h[first_deriv <= lower_bound] = 0
+
+    if not np.any(h):
         return False
 
-    idx = np.nanargmax(h)
+    idx = np.argmax(h)
+
     return idx
 
 
@@ -639,7 +692,7 @@ def calc_falling_slope_time(
         max_: max value of the slope of interest (pA for Im and mV for Vm).
               Almost always but not necessarily
               the max value of the timeseries. e.g. AP peak or negative event baseline
-        min_: min value of the slope of interst (e.g. AP fAHP or negative event peak)
+        min_: min value of the slope of interest (e.g. AP fAHP or negative event peak)
         max_cutoff_perc: cutoff percentage for the minimum value
         min_cutoff_perc: cutoff percentage for the maximum value
         interp: bool, to interp 200 kHz
@@ -749,7 +802,7 @@ def twohundred_kHz_interpolate(
     """
     Interpolate to 200 kHz with linear interpolation.
     """
-    fs = calc_fs(time_)
+    fs, _ = calc_fs_and_ts(time_)
     interp_factor = khz_interpolate / fs
     vm = interpolate_data(vm, time_, interp_method, interp_factor, 0)
     time_array = interpolate_data(time_, time_, "linear", interp_factor, 0)
@@ -791,8 +844,8 @@ def filter_data(
     fs: Union[float, NpArray64],
     filter_: Literal["bessel", "butter"],
     order: Int,
-    cutoff_hz: Union[float, NpArray64],
-    low_or_highpass: str,
+    cutoff_hz: Union[float, NpArray64, Tuple],
+    btype: str,
     axis: Int,
 ) -> NpArray64:
     """
@@ -807,15 +860,15 @@ def filter_data(
                               direction, this effective order is doubled.
                               e.g. if order = 1, true order of the filter will be 2.
            cutoff_hz:         the frequecy cutoff in Hz
-           low_or_highpass:  "lowpass" or "highpass"
+           btype:  "lowpass" or "highpass"
            axis:              axis of array to filter along
     """
     if filter_ == "bessel":
-        b, a = get_bessel(fs, order, cutoff_hz, low_or_highpass)
+        sos = get_bessel(fs, order, cutoff_hz, btype)
     elif filter_ == "butter":
-        b, a = get_butterworth(fs, order, cutoff_hz, low_or_highpass)
+        sos = get_butterworth(fs, order, cutoff_hz, btype)
 
-    filtered_data = scipy.signal.filtfilt(b, a, data, axis=axis)
+    filtered_data = scipy.signal.sosfiltfilt(sos, data, axis=axis)
 
     return filtered_data
 
@@ -823,23 +876,21 @@ def filter_data(
 def get_bessel(
     fs: Union[float, NpArray64],
     order: Int,
-    cutoff_hz: Union[float, NpArray64],
-    low_or_highpass: str,
-) -> Tuple[NpArray64, NpArray64]:
-    nyquist = fs / 2
-    b, a = scipy.signal.bessel(N=order, Wn=cutoff_hz / nyquist, btype=low_or_highpass)
-    return b, a
+    cutoff_hz: Union[float, NpArray64, Tuple],
+    btype: str,
+) -> NpArray64:
+    sos = scipy.signal.bessel(N=order, Wn=cutoff_hz, btype=btype, output="sos", fs=fs)
+    return sos
 
 
 def get_butterworth(
     fs: Union[float, NpArray64],
     order: Int,
-    cutoff_hz: Union[float, NpArray64],
-    low_or_highpass: str,
-) -> Tuple[NpArray64, NpArray64]:
-    nyquist = fs / 2
-    b, a = scipy.signal.butter(N=order, Wn=cutoff_hz / nyquist, btype=low_or_highpass)
-    return b, a
+    cutoff_hz: Union[float, NpArray64, Tuple],
+    btype: str,
+) -> NpArray64:
+    sos = scipy.signal.butter(N=order, Wn=cutoff_hz, btype=btype, output="sos", fs=fs)
+    return sos
 
 
 def get_fft(y: NpArray64, detrend: bool, fs: NpArray64, cut_down: bool) -> Dict:
@@ -924,7 +975,7 @@ def downsample_data(data: NpArray64, downsample_factor: Int, filter_opts: Option
 
     INPUTS:
          data: data to downsample (matrix record X sample)
-         downsample_factor: intger factor to downsample by
+         downsample_factor: integer factor to downsample by
          filter_opts: optional dictionary - if provided data is low-pass filtered
                       below the nyquist frequency of the downsampled data before
                       downsampling
@@ -975,7 +1026,7 @@ def detrend_data(x: NpArray64, y: NpArray64, poly_order: Int) -> Tuple[NpArray64
     return detrended_y, fit
 
 
-def fit_polynomial(x: NpArray64, y: NpArray64, poly_order: Int) -> NpArray64:
+def fit_polynomial(x: NDArray, y: NpArray64, poly_order: Int, progress_bar_callback=None) -> NpArray64:
     """
     Convenience function for fitting polynomial to multiple rows at once,
     or a single 1D array.
@@ -992,9 +1043,12 @@ def fit_polynomial(x: NpArray64, y: NpArray64, poly_order: Int) -> NpArray64:
     else:
         coefs = np.polyfit(x, y.T, deg=poly_order).T
 
-        fit = utils.np_empty_nan((np.shape(y)))
+        fit = np.zeros(y.shape, dtype=np.float64)
         for irow in range(y.shape[0]):
             fit[irow, :] = np.polyval(coefs[irow, :], x)
+
+            if progress_bar_callback is not None:
+                progress_bar_callback()
 
     return fit
 
@@ -1152,38 +1206,6 @@ def process_non_negative_param_for_frequency_table(
     return data, new_event_nums
 
 
-def get_num_bins_from_settings(data: NpArray64, settings: Dict, parameter: str) -> Int:
-    """
-    Calculate the bin number based on user settings.
-    see calc_cumulative_probability_or_histogram() for inputs
-    """
-    binning_method = settings["binning_method"]
-    n_samples = len(data)
-
-    if binning_method == "auto":
-        try:
-            num_bins = len(np.histogram_bin_edges(data, bins="auto"))
-        except MemoryError:
-            # can occur with this function when bin sizes are very small.
-            num_bins = len(np.histogram_bin_edges(data, bins="sqrt"))
-
-    elif binning_method == "custom_binnum":
-        num_bins = int(settings["custom_binnum"]) if settings["custom_binnum"] <= n_samples else n_samples
-
-    elif binning_method == "custom_binsize":
-        num_bins = np.round(np.ptp(data) / settings["custom_binsize"][parameter]).astype(int)
-
-    elif binning_method == "num_events_divided_by":
-        num_bins = np.round(len(data) / settings["divide_by_number"]).astype(int)
-
-    if num_bins > len(data) or num_bins == 0:
-        num_bins = len(data)
-    elif num_bins < 2:
-        num_bins = 2
-
-    return num_bins
-
-
 def calc_cumulative_probability_or_histogram(
     data: NpArray64, settings: Dict, parameter: str, legacy_bin_sizes: bool
 ) -> Tuple[FalseOrFloat, FalseOrFloat, FalseOrFloat, Union[Literal[False], Int]]:
@@ -1202,9 +1224,8 @@ def calc_cumulative_probability_or_histogram(
             'divide_by_number': divisor if 'num_events_divided_by' option is chosen
             'x_axis_display': 'bin_centers', 'left_edge', 'right_edge'
 
-        paramter: event paramter beign analysed (frequency, amplitude, decay_tay,
-                  decay_percent.. (see configs,
-                  frequency_data_options["custom_binsize"]))
+        parameter: event parameter being analysed (frequency, amplitude, decay_tau, ...
+                  (see configs, frequency_data_options["custom_binsize"]))
         legacy_bin_sizes: bool
     """
     cum_prob_or_hist = settings["plot_type"]
@@ -1213,34 +1234,108 @@ def calc_cumulative_probability_or_histogram(
         return False, False, False, False
 
     # Calculate number of bins based on user settings
-    num_bins = get_num_bins_from_settings(data, settings, parameter)
 
     # Use bin range from 0 - max of data, previously a little extra padding
     # was added similar to scipy implementation, but using the data is more
     # interpretable for end user.
     if legacy_bin_sizes:
-        s = (np.max(data) - np.min(data)) / (2.0 * (num_bins - 1.0))
+        raise NotImplementedError("Legacy bin sizes is deprecated")
+
+    if settings["binning_method"] == "custom_binsize":
+        limits, bins_or_num_bins = get_bins_and_limits_for_custom_binsize(data, settings, parameter)
     else:
-        s = 0
-    max_ = np.max(data) + s
-    limits = (np.min(data), max_)
+        limits = (np.min(data), np.max(data))
+        bins_or_num_bins = get_num_bins_from_settings(data, settings)
 
     # Calculate the y values and bin edges for the histogram / cumulative probability
     if cum_prob_or_hist == "cum_prob":
-        y_values, bin_edges, binsize = calc_cumulative_probability(data, num_bins, limits)
+        y_values, bin_edges, binsize = calc_cumulative_probability(data, bins_or_num_bins, limits)
 
     elif cum_prob_or_hist == "hist":
-        y_values, bin_edges, binsize = calc_histogram(data, num_bins, limits)
+        y_values, bin_edges, binsize = calc_histogram(data, bins_or_num_bins, limits)
 
     # format the x values based on user settings
     x_values = format_bin_edges(bin_edges, settings["x_axis_display"])
 
-    return y_values, x_values, binsize, num_bins
+    return y_values, x_values, binsize, bins_or_num_bins
 
 
-def calc_histogram(data: NpArray64, num_bins: Int, limits: Tuple) -> Tuple[NpArray64, NpArray64, NpArray64]:
+def get_bins_and_limits_for_custom_binsize(data, settings, parameter):
+    """
+    Custom binsize returns the full array of bins, giving more control
+    that passing the number of bins to the underlying numpy functions.
+    It also exposes the ability to adjust the starting bin value.
+
+    see calc_cumulative_probability_or_histogram() for inputs
+
+    limits: tuple
+        (min, max) value of the bins. Only used for custom_binsize.
+    """
+    max_ = np.max(data)
+
+    if settings["fix_start_bin"][parameter]["on"]:
+        min_ = settings["fix_start_bin"][parameter]["value"]
+        if min_ >= max_:
+            min_ = np.min(data)
+        limits = (min_, max_)
+    else:
+        limits = (np.min(data), max_)
+
+    if settings["custom_binsize"][parameter] == 0:
+        bins_or_num_bins = int(get_auto_num_bins(data))
+    else:
+        bins_or_num_bins = np.arange(
+            limits[0], limits[1] + settings["custom_binsize"][parameter], settings["custom_binsize"][parameter]
+        )
+
+    return limits, bins_or_num_bins
+
+
+def get_num_bins_from_settings(data: NpArray64, settings: Dict) -> Int:
+    """
+    Calculate the bin number based on user settings.
+    see calc_cumulative_probability_or_histogram() for inputs
+    """
+    binning_method = settings["binning_method"]
+    n_samples = len(data)
+
+    if binning_method == "auto":
+        num_bins = int(get_auto_num_bins(data))
+
+    elif binning_method == "custom_binnum":
+        num_bins = int(settings["custom_binnum"]) if settings["custom_binnum"] <= n_samples else n_samples
+
+    elif binning_method == "num_events_divided_by":
+        num_bins = int(np.round(len(data) / settings["divide_by_number"]))
+
+    if num_bins > len(data) or num_bins == 0:
+        num_bins = len(data)
+    elif num_bins < 2:
+        num_bins = 2
+
+    return num_bins
+
+
+def get_auto_num_bins(data: NpArray64) -> NpArray64:
+    """
+    Get bin numbers for cumulative frequency / histogram
+    plots automatically.
+    """
+    try:
+        num_bins = len(np.histogram_bin_edges(data, bins="auto"))
+    except MemoryError:
+        # can occur with this function when bin sizes are very small.
+        num_bins = len(np.histogram_bin_edges(data, bins="sqrt"))
+    return num_bins
+
+
+def calc_histogram(data: NpArray64, bins_or_num_bins: Int, limits: Tuple) -> Tuple[NpArray64, NpArray64, NpArray64]:
     """ """
-    info = np.histogram(data, bins=num_bins, range=limits)
+    if isinstance(bins_or_num_bins, int):
+        info = np.histogram(data, bins=bins_or_num_bins, range=limits)
+    else:
+        info = np.histogram(data, bins=bins_or_num_bins)
+
     y_values = info[0]
     bin_edges = info[1]
     binsize = bin_edges[1] - bin_edges[0]
@@ -1249,7 +1344,7 @@ def calc_histogram(data: NpArray64, num_bins: Int, limits: Tuple) -> Tuple[NpArr
 
 
 def calc_cumulative_probability(
-    data: NpArray64, num_bins: Int, limits: Tuple
+    data: NpArray64, bins_or_num_bins: Int | NpArray64, limits: Tuple
 ) -> Tuple[NpArray64, NpArray64, NpArray64]:
     """
     Calculate the binned cumulative probability from data processed
@@ -1257,14 +1352,14 @@ def calc_cumulative_probability(
 
     INPUT:
         data: data processed for cum prob analysis (see above functions)
-        num_bins: number of bins to divide the data into
+        bins_or_num_bins: number of bins to divide the data into, or an array of bin edges
         limits: start / end limits for the bins
 
     OUTPUT:
         cdf: 1 x bin cumulative probabilities
         bin_edges, binsize - generated bin edges and binsizes
     """
-    counts, bin_edges, binsize = calc_histogram(data, num_bins, limits)
+    counts, bin_edges, binsize = calc_histogram(data, bins_or_num_bins, limits)
 
     pdf = counts / np.sum(counts)
     cdf = np.cumsum(pdf)
@@ -1490,9 +1585,7 @@ def get_stimulus_artefact_removed_data(
         window_pad : optional pad to extend the forward and backward search periods.
 
     """
-    data_stimulus_artefact_removed = np.empty(data.shape)
-
-    data_stimulus_artefact_removed.fill(np.nan)
+    data_stimulus_artefact_removed = utils.np_empty_nan(data.shape)
 
     for rec in range(data.shape[0]):
         data_stimulus_artefact_removed[rec, :] = remove_stimulus_artefact_from_record(
@@ -1680,34 +1773,49 @@ def get_artefact_peak_window_edges(
 
 
 def set_data_params(data_object: RawData) -> None:
-    """"""
-    data_object.min_max_time = np.asarray([[np.min(__), np.max(__)] for __ in data_object.time_array])
+    """TODO: this is kind of confusing"""
+    data_object.min_max_time = np.vstack([data_object.time_array[:, 0], data_object.time_array[:, -1]]).T
     data_object.t_start = data_object.time_array[0][0]
     data_object.t_stop = data_object.time_array[-1][-1]
-    data_object.num_recs = len(data_object.vm_array)
-    data_object.num_samples = len(data_object.vm_array[0])
+    data_object.num_recs = data_object.channel_1_data.shape[0]  # both im and vm array are same size
+    data_object.num_samples = data_object.channel_1_data.shape[1]
     data_object.rec_time = data_object.min_max_time[0][1] - data_object.min_max_time[0][0]
-    data_object.fs = calc_fs(data_object.time_array[0])
+    fs, ts = calc_fs_and_ts(data_object.time_array[0])
+    data_object.fs = fs
 
     # overwrite these from neo for when data is manipulated (e.g. interp)
-    data_object.ts = 1 / data_object.fs
-    sample_spacing_in_ms = data_object.ts * 1000
+    data_object.ts = ts
 
-    data_object.norm_first_deriv_vm = np.diff(data_object.vm_array, append=0) / sample_spacing_in_ms
-    data_object.norm_second_deriv_vm = (
-        np.diff(data_object.vm_array, n=2, append=np.zeros((data_object.num_recs, 2))) / sample_spacing_in_ms
-    )
-    data_object.norm_third_deriv_vm = (
-        np.diff(data_object.vm_array, n=3, append=np.zeros((data_object.num_recs, 3))) / sample_spacing_in_ms
-    )
+    data_object.norm_first_deriv_data = None
 
-    data_object.vm_array.setflags(write=False)
-    data_object.im_array.setflags(write=False)
+    data_object.channel_1_data.setflags(write=False)
+    data_object.channel_2_data.setflags(write=False)
     data_object.time_array.setflags(write=False)
     data_object.min_max_time.setflags(write=False)
-    data_object.norm_first_deriv_vm.setflags(write=False)
-    data_object.norm_third_deriv_vm.setflags(write=False)
-    data_object.norm_second_deriv_vm.setflags(write=False)
+
+    data_object.records_are_contiguous = check_if_record_time_is_contiguous(
+        data_object.min_max_time, data_object.num_recs, data_object.ts
+    )
+
+
+def check_if_record_time_is_contiguous(min_max_time: NpArray64, num_recs: int, ts: NpArray64) -> bool:
+    """
+    Determine if recordings in a multi-record file are contiguous.
+    This finds the difference in time between consecutive records,
+    and checks it is equal to the time step (ts) (to 10 dp tolerance).
+    """
+    if num_recs == 1:
+        return True
+
+    if np.unique(min_max_time[:, 0]).size == 1:
+        # a 'normalised' time recording
+        return False
+
+    diffs = min_max_time[1:, 0] - min_max_time[:-1, 1]
+
+    is_contiguous = np.allclose(diffs, ts, rtol=0, atol=1e-10)
+
+    return is_contiguous
 
 
 # --------------------------------------------------------------------------------------
@@ -1715,13 +1823,10 @@ def set_data_params(data_object: RawData) -> None:
 # --------------------------------------------------------------------------------------
 
 
-def calc_fs(time_: NpArray64) -> NpArray64:
-    num_samples = len(time_)
-    time_period = np.max(time_) - np.min(time_)
-    fs = (num_samples - 1) / time_period
-
-    fs = utils.fix_numpy_typing(fs)
-    return fs
+def calc_fs_and_ts(time_: NpArray64) -> Tuple[NpArray64, ...]:
+    ts = time_[1] - time_[0]
+    fs = 1 / ts
+    return fs, ts
 
 
 def nearest_point_euclidean_distance(
@@ -1788,7 +1893,7 @@ def generate_time_array(
 def sort_dict_based_on_keys(dict_to_sort: Dict) -> Dict:
     """
     Sort a dict by the key, assuming the key is a str time
-    at which a spike / event occured.
+    at which a spike / event occurred.
     """
     sorted_dict = dict(sorted(dict_to_sort.items(), key=lambda item: float(item[0])))
 
@@ -1829,7 +1934,7 @@ def total_num_events(event_info: Union[List[Dict], Info], return_per_rec: bool =
     either summed or per-rec
     """
     num_recs = len(event_info)
-    per_rec = np.zeros(num_recs).astype(int)
+    per_rec = np.zeros(num_recs, dtype=int)
     for rec in range(num_recs):
         rec_info = event_info[rec]
         if rec_info != 0 and any(rec_info):
@@ -1841,14 +1946,19 @@ def total_num_events(event_info: Union[List[Dict], Info], return_per_rec: bool =
 
 
 def calculate_summary_statistics(
-    data: Union[List[float], NpArray64],
-) -> Tuple[np.float64, np.float64, np.float64]:
+    data: NpArray64,
+    remove_nan: bool = False,
+) -> Tuple[np.float64, np.float64, np.float64]:  # Tuple[np.float64, np.float64, np.float64]:
     """
     Calculate the mean, standard deviation and standard error for 1D data.
     """
+    if remove_nan:
+        data = data[~np.isnan(data)]
+
     mean = np.mean(data)
-    stdev = np.std(data, ddof=1)
-    sterr = np.std(data, ddof=1) / np.sqrt(len(data))
+    stdev = np.std(data, ddof=1) if data.size > 1 else np.float64(np.nan)
+    sterr = np.std(data, ddof=1) / np.sqrt(len(data)) if data.size > 1 else np.float64(np.nan)
+
     return mean, stdev, sterr
 
 
