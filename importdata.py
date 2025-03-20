@@ -20,8 +20,10 @@ from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
 
 import neo
 import numpy as np
+from dialog_menus import load_csv_dialog
 from dialog_menus.importdata_show_channels import ShowChannelsWarning, ViewChannels
 from ephys_data_methods import core_analysis_methods, heka_loader
+from neo.rawio.baserawio import _signal_channel_dtype
 from utils import utils
 
 if TYPE_CHECKING:
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
     from mainwindow.mainwindow import MainWindow
     from neo.core.block import Block
     from neo.io.axonio import AxonIO
+    from neo.io.baseio import BaseIO
     from numpy.typing import NDArray
 
 
@@ -53,7 +56,6 @@ class ImportData:
         self.ext = ext.upper()
         self.cfgs = cfgs
         self.mw = mw
-        self.raw_data: Optional[RawData] = None
 
         self.channels, self.reader, self.neo_block = self.load_file_with_neo()
 
@@ -83,7 +85,16 @@ class ImportData:
         if channel_2 and channel_2_idx is not None and not self.channel_is_proxy(channel_2_idx):
             channel_2_units, channel_2_type = self.get_channel_type(channel_2, channel_2_idx)
 
-            if not self.channel_2_exists_and_is_different_type_to_channel_1(channel_1_type, channel_2_type):
+            if not channel_2_type:
+                return
+
+            if self.ext == ".SMR":
+                # SMR files can have channels with different properties in the same record.
+                self.mw.show_messagebox(
+                    "SMR Error",
+                    "Only able to load one channel at a time for SMR files.\n"
+                    "Select the channel to load at 'File' > 'File Loading Options'.",
+                )
                 return
 
             Data = RawData(
@@ -97,6 +108,7 @@ class ImportData:
                 channel_2_units,
                 channel_2_idx,
                 self.reader,
+                self.channels,
                 self.ext,
             )
         else:
@@ -111,6 +123,7 @@ class ImportData:
                 None,
                 None,
                 self.reader,
+                self.channels,
                 self.ext,
             )
         return Data
@@ -124,9 +137,74 @@ class ImportData:
     # method "import_data" will return None if import fails.
     # --------------------------------------------------------------------------------------
 
-    def load_file_with_neo(
+    def load_file_with_neo(self) -> Tuple[Optional[NDArray], Optional[BaseIO], Optional[Block]]:
+        """"""
+        if self.ext == ".DAT":
+            channels, reader, neo_block = self.load_heka()
+
+        elif self.ext == ".CSV":
+            channels, reader, neo_block = self.load_csv()
+
+        else:
+            channels, reader, neo_block = self.load_common_neo_api_files()
+
+        if channels is None:
+            return None, None, None
+
+        return channels, reader, neo_block
+
+    def load_heka(self) -> Tuple[Optional[NDArray], Optional[BaseIO], Optional[Block]]:
+        """"""
+        # this will exec to get user selected Tree index
+        heka = heka_loader.OpenHeka(self.mw, self.full_filepath)
+
+        if not heka:
+            return None, None, None
+
+        reader, neo_block = heka.get_reader_and_neo_block(
+            self.cfgs.file_load_options["heka_apply_zero_offset"],
+            self.cfgs.file_load_options["heka_stimulus_reconstruction"],
+        )
+
+        if not reader:
+            return None, None, None
+
+        channels = reader.header["signal_channels"]
+
+        return channels, reader, neo_block
+
+    def load_csv(self) -> Tuple[Optional[NDArray], Optional[BaseIO], Optional[Block]]:
+        """"""
+        if self.cfgs.load_csv["show_on_file_load"]:
+            dialog = load_csv_dialog.LoadCSV(self.mw, self.mw)
+            dialog.exec()
+
+            if not dialog.ok_pressed:
+                return None, None, None
+        try:
+            reader = neo.CSVIO(
+                self.full_filepath,
+                ordered_datatype=self.cfgs.load_csv["ordered_datatype"],
+                ordered_units=self.cfgs.get_load_csv_ordered_units(),
+                interleaved_or_consecutive=self.cfgs.load_csv["interleaved_or_consecutive"],
+                row_or_column=self.cfgs.load_csv["row_or_column"],
+                has_header=self.cfgs.load_csv["has_header"],
+                has_index=self.cfgs.load_csv["has_index"],
+                time_from_sampling_rate=self.cfgs.load_csv["time_from_fs"],
+            )
+
+            neo_block = reader.read_block()
+        except BaseException as e:
+            self.mw.show_messagebox("CSV Error", f"{e}")
+            return None, None, None
+
+        channels = reader.header["signal_channels"]
+
+        return channels, reader, neo_block
+
+    def load_common_neo_api_files(
         self,
-    ) -> Tuple[Optional[NDArray], Optional[AxonIO], Optional[Block]]:
+    ) -> Tuple[Optional[NDArray], Optional[BaseIO], Optional[Block]]:
         """
         Load the file with Neo. Return None if file cannot be loaded.
 
@@ -135,59 +213,52 @@ class ImportData:
             reader: neo raw output class
             neo_block: block from the neo file
         """
-        try:
-            if self.ext == ".ABF":
-                reader = neo.AxonIO(self.full_filepath)
-            elif self.ext in [".AXGX", ".AXGD"]:
-                reader = neo.AxographIO(self.full_filepath)
-            elif self.ext == ".WCP":
-                reader = neo.WinWcpIO(self.full_filepath)
-            elif self.ext == ".EDR":
-                reader = neo.WinEdrIO(self.full_filepath)
-            elif self.ext == ".H5":
-                reader = neo.WaveSurferIO(self.full_filepath)
-            elif self.ext == ".DAT":
-                pass
-            elif self.ext == ".SMR":
-                reader = neo.Spike2IO(self.full_filepath)
-            else:
-                utils.show_messagebox(
-                    "Cannot Determine filetype",
-                    "Cannot determine filetype. Currently supported filetypes are:\n"
-                    ".abf, .axgx, .axgd, .h5 (Wavesurfer), "
-                    ".dat (HEKA), .smr, .wcp, .edr",
-                )
-                return None, None, None
-        except:
+        # Load the reader
+        # try:
+        if self.ext == ".ABF":
+            reader = neo.AxonIO(self.full_filepath)
+        elif self.ext in [".AXGX", ".AXGD"]:
+            reader = neo.AxographIO(self.full_filepath)
+        elif self.ext == ".WCP":
+            reader = neo.WinWcpIO(self.full_filepath)
+        elif self.ext == ".EDR":
+            reader = neo.WinEdrIO(self.full_filepath)
+        elif self.ext == ".H5":
+            reader = neo.WaveSurferIO(self.full_filepath)
+        elif self.ext == ".SMR":
+            reader = neo.Spike2IO(self.full_filepath)
+        elif self.ext == ".IBW":
+            reader = neo.IgorIO(self.full_filepath)
+        else:
             utils.show_messagebox(
-                "Neo Load Error",
-                "Could not load file. Check that the "
-                "sampling rate is identical for all records "
-                "and that read permission is granted.",
+                "Cannot Determine filetype",
+                "Cannot determine filetype. Currently supported filetypes are:\n"
+                ".abf, .axgx, .axgd, .csv, .h5 (Wavesurfer), "
+                ".dat (HEKA), .smr, .wcp, .edr",
             )
             return None, None, None
+        # except:
+        #    utils.show_messagebox(
+        #        "Neo Load Error",
+        #        "Could not load file. Check that the "
+        #        "sampling rate is identical for all records "
+        #        "and that read permission is granted.",
+        #    )
+        #    return None, None, None
 
-        if self.ext == ".H5":
+        if self.ext in [".H5", ".IBW"]:
             neo_block = reader.read_block()
-
-        elif self.ext == ".DAT":
-            # this will exec to get user selected Tree index
-            heka = heka_loader.OpenHeka(self.mw, self.full_filepath)
-
-            if not heka:
-                return None, None, None
-
-            reader, neo_block = heka.get_reader_and_neo_block()
-
-            if not reader:
-                return None, None, None
-
         else:
             # if grouped, grouped signals go to first index destroying the order
             # specified in reader.headers["signal_channels"]
             neo_block = reader.read_block(signal_group_mode="split-all")
 
-        channels = reader.header["signal_channels"]
+        if self.ext == ".IBW":
+            channels = self.make_channels_from_analogsignals(neo_block)
+            if channels is False:
+                return None, None, None
+        else:
+            channels = reader.header["signal_channels"]
 
         return channels, reader, neo_block
 
@@ -260,6 +331,43 @@ class ImportData:
             raise TypeError("num channels must be > 0")
 
         return channel_1, channel_1_idx, channel_2, channel_2_idx  # type: ignore
+
+    def make_channels_from_analogsignals(self, neo_block) -> Union[Literal[False], NDArray]:
+        """ """
+        num_chan = len(neo_block.segments[0].analogsignals)
+
+        all_channels = []
+
+        for chan_idx in range(num_chan):
+            assert neo_block.segments[0].analogsignals[0].units.magnitude == 1
+            units = neo_block.segments[0].analogsignals[0].units.dimensionality.unicode
+            fs = neo_block.segments[0].analogsignals[0].sampling_rate.magnitude
+
+            all_channels.append(
+                (str(chan_idx), str(chan_idx), fs, None, units, None, None, None),
+            )
+
+            # Check that all records have the same units / sampling rate
+            if not len(neo_block.segments) == 1:
+                self.mw.show_messagebox(
+                    "Load File Error",
+                    "Multi-segment records not currently supported. Please contact" "support@easyelectrophysiology.com",
+                )
+                return False
+
+            for seg in neo_block.segments:  # For future...
+                units_same = units == seg.analogsignals[chan_idx].units.dimensionality.unicode
+                fs_same = fs == neo_block.segments[0].analogsignals[0].sampling_rate.magnitude
+
+                if not (units_same and fs_same):
+                    self.mw.show_messagebox(
+                        "Load File Error",
+                        "The file contains different units or sampling rates across "
+                        "records. This type of recording is not supported.",
+                    )
+                    return False
+
+        return np.array(all_channels, dtype=_signal_channel_dtype)
 
     def channel_is_proxy(self, channel_idx: Int, channel_1: bool = False) -> bool:
         """
@@ -374,7 +482,7 @@ class ImportData:
             if channel_units == "not_recognised":
                 utils.show_messagebox(
                     "Units Error",
-                    "Input units were not recognised. " "Please try again or press cancel.",
+                    "Input units were not recognised. Please try again or press cancel.",
                 )
                 continue
 
@@ -463,7 +571,7 @@ class ImportData:
             if user_input_channels == "":  # catch user cancel
                 return None, None, None, None
 
-            user_input_channels = utils.check_comma_seperated_user_input_and_extract_ints(
+            user_input_channels = utils.check_comma_separated_user_input_and_extract_ints(
                 user_input_channels, allowed_chars=[","]
             )
             if user_input_channels is None:
@@ -622,76 +730,159 @@ class RawData:
         channel_2_type: Optional[str],
         channel_2_units: Optional[str],
         channel_2_idx: Optional[Int],
-        reader: AxonIO,
+        reader: BaseIO,
+        channels: NDArray,
         file_ext: str,
     ):
         self.load_setting = cfgs.file_load_options["force_load_options"]
         self.num_recs = len(neo_block.segments)
-        self.num_samples = len(neo_block.segments[0].analogsignals[0])
+        self.num_samples = len(neo_block.segments[0].analogsignals[channel_1_idx])
 
         # strip quantities
-        self.fs = neo_block.segments[0].analogsignals[0].sampling_rate.magnitude
-        self.ts = neo_block.segments[0].analogsignals[0].sampling_period.magnitude
+        self.fs = neo_block.segments[0].analogsignals[channel_1_idx].sampling_rate.magnitude
+        self.ts = neo_block.segments[0].analogsignals[channel_1_idx].sampling_period.magnitude
         self.time_units = str(neo_block.segments[0].t_start).split(" ")[1]
 
         # empty must be zero, if empty or nan cannot be properly plot by pyqtgraph in
         # the one-channel case
-        self.vm_array = np.zeros((self.num_recs, self.num_samples))
-        self.im_array = np.zeros((self.num_recs, self.num_samples))
-        self.time_array = np.zeros((self.num_recs, self.num_samples))
+        self.channel_1_data = np.zeros((self.num_recs, self.num_samples), dtype=np.float64)
+        self.channel_2_data = np.zeros((self.num_recs, self.num_samples), dtype=np.float64)
+        self.time_array = np.zeros((self.num_recs, self.num_samples), dtype=np.float64)
         self.num_data_channels = num_chans
 
         # in rare cases, some setups will add a tiny offset to time so it does not
         # start at zero
         self.time_offset = False
-        self.vm_units = None
-        self.im_units = None
         self.channel_1_type = channel_1_type
         self.channel_2_type = channel_2_type
         self.channel_1_idx = channel_1_idx
         self.channel_2_idx = channel_2_idx
+        self.channel_1_units = channel_1_units
+        self.channel_2_units = channel_2_units
         self.tags = ""
-        self.all_channels = reader.header["signal_channels"]
+        self.all_channels = channels  # reader.header["signal_channels"]
 
-        self.recording_type: Literal["current_clamp", "voltage_clamp_1_record", "voltage_clamp_multi_record"]
+        self.norm_first_deriv_data: Optional[NpArray64] = None
+        self.recording_type: Literal["current_clamp", "voltage_clamp", "unknown"]
         self.t_start: float  # start time (first record)
         self.t_stop: float  # end time (final record)
-
+        self.records_are_contiguous: bool  # whether time is contiguous between records
         self.min_max_time: NpArray64
         self.rec_time: NpArray64
-        self.norm_first_deriv_vm: NpArray64
-        self.norm_second_deriv_vm: NpArray64
-        self.norm_third_deriv_vm: NpArray64
 
-        if self.load_setting is None and channel_1_type == "Vm" or self.load_setting == "current_clamp":
-            self.vm_array = self.extract_data_from_array(channel_1_idx, neo_block)
-            self.vm_units = channel_1_units
+        if self.load_setting is not None:
+            self.fix_channels_to_current_or_voltage_clamp()
+
+        if self.channel_1_type == "Vm" and (self.channel_2_idx is None or self.channel_2_type == "Im"):
             self.recording_type = "current_clamp"
-
-        elif self.load_setting is None and channel_1_type == "Im" or self.load_setting == "voltage_clamp":
-            self.im_array = self.extract_data_from_array(channel_1_idx, neo_block)
-            self.im_units = channel_1_units
-            if self.num_recs == 1:
-                self.recording_type = "voltage_clamp_1_record"
-            else:
-                self.recording_type = "voltage_clamp_multi_record"
-
-        if channel_2_idx is not None:
-            if self.load_setting is None and channel_2_type == "Vm" or self.load_setting == "voltage_clamp":
-                self.vm_array = self.extract_data_from_array(channel_2_idx, neo_block)
-                self.vm_units = channel_2_units
-
-            elif self.load_setting is None and channel_2_type == "Im" or self.load_setting == "current_clamp":
-                self.im_array = self.extract_data_from_array(channel_2_idx, neo_block)
-                self.im_units = channel_2_units
-
+        elif self.channel_1_type == "Im" and (self.channel_2_idx is None or self.channel_2_type == "Vm"):
+            self.recording_type = "voltage_clamp"
         else:
-            self.handle_generate_axon_protocol(reader, cfgs)
+            self.recording_type = "unknown"
+
+        if file_ext.upper() == ".DAT":
+            # This will scale HEKA's zero offsets, so must occur
+            # before channel units are overwritten below.
+            self.heka_metadata = self.load_heka_metadata(self.channel_1_type, self.channel_1_units, reader)
+        else:
+            self.heka_metadata = None
+
+        if self.channel_1_type == "Im":
+            self.channel_1_data, final_units = self.extract_data_from_array(
+                self.channel_1_idx, neo_block, self.channel_1_type, self.channel_1_units
+            )
+            self.channel_1_units = final_units
+
+            if self.channel_2_idx is not None:
+                self.channel_2_data, final_units = self.extract_data_from_array(
+                    self.channel_2_idx, neo_block, self.channel_2_type, self.channel_2_units
+                )
+                self.channel_2_units = final_units
+
+        elif self.channel_1_type == "Vm":
+            self.channel_1_data, final_units = self.extract_data_from_array(
+                self.channel_1_idx, neo_block, self.channel_1_type, self.channel_1_units
+            )
+            self.channel_1_units = final_units
+
+            if self.channel_2_idx is not None:
+                self.channel_2_data, final_units = self.extract_data_from_array(
+                    self.channel_2_idx, neo_block, self.channel_2_type, self.channel_2_units
+                )
+                self.channel_2_units = final_units
+            elif file_ext.upper() == ".ABF":
+                self.handle_generate_axon_protocol(reader, cfgs)
 
         self.time_array, self.t_start, self.t_stop = self.extract_time_array(neo_block)
         self.check_and_clean_data()
-        self.update_tags(reader, file_ext)
+
+        # file format specified fields.
+        if file_ext.upper() == ".ABF":
+            self.update_tags(reader)
+
         return
+
+    def fix_channels_to_current_or_voltage_clamp(self):
+        if self.load_setting == "current_clamp":
+            self.channel_1_type = "Vm"
+            self.channel_1_units = "mV"
+            if self.channel_2_type is not None:
+                self.channel_2_type = "Im"
+                self.channel_2_units = "pA"
+
+        elif self.load_setting == "voltage_clamp":
+            self.channel_1_type = "Im"
+            self.channel_1_units = "pA"
+            if self.channel_2_type is not None:
+                self.channel_2_type = "Vm"
+                self.channel_2_units = "mV"
+        else:
+            assert self.load_setting is None
+
+    def get_primary_data(self) -> NpArray64:
+        """
+        Get data from the primary channel (e.g. the voltage trace from
+        voltage clamp).
+        """
+        return self.channel_1_data
+
+    def get_secondary_data(self) -> NpArray64:
+        """
+        Get data from the primary channel (e.g. the voltage trace from
+        voltage clamp).
+        """
+        return self.channel_2_data
+
+    def set_data_by_recording_type(
+        self,
+        primary_channel_array: Optional[NpArray64] = None,
+        secondary_channel_array: Optional[NpArray64] = None,
+    ) -> None:
+        """
+        Sets data based on analysis type (see get_primary_data()).
+        The passed data should match the shape of the existing data
+        Must call `set_data_params` and update the GUI after this function.
+        """
+        assert self.recording_type in ["current_clamp", "voltage_clamp", "unknown"]
+        assert self.channel_1_type in ["Im", "Vm"]
+        if self.channel_2_type is not None:
+            assert self.channel_2_type in ["Im", "Vm"]
+
+        if primary_channel_array is not None:
+            self.channel_1_data = primary_channel_array
+
+        if secondary_channel_array is not None:
+            self.channel_2_data = secondary_channel_array
+
+    def get_norm_first_deriv_data(self) -> NpArray64:
+        """ """
+        sample_spacing_in_ms = self.ts * 1000
+
+        if self.norm_first_deriv_data is None:
+            self.norm_first_deriv_data = np.diff(self.get_primary_data(), append=0) / sample_spacing_in_ms
+            self.norm_first_deriv_data.setflags(write=False)
+
+        return self.norm_first_deriv_data
 
     def check_and_clean_data(self) -> None:
         """
@@ -713,42 +904,40 @@ class RawData:
         if self.t_start != 0:
             self.time_offset = np.array(self.t_start)
 
-        if self.im_units == "mV" or self.vm_units == "pA":
-            return
-
-        conversion_to_pa_table = core_analysis_methods.get_conversion_to_pa_table()
-        conversion_to_mv_table = core_analysis_methods.get_conversion_to_mv_table()
-
-        if self.im_units and self.im_units != "pA":
-            self.im_array *= conversion_to_pa_table[self.im_units]
-            self.im_units = "pA"
-
-        if self.vm_units and self.vm_units != "mV":
-            self.vm_array *= conversion_to_mv_table[self.vm_units]
-            self.vm_units = "mV"
-
     def extract_time_array(self, neo_block: Block) -> Tuple[NpArray64, float, float]:
         """ """
         channel_time_check = True
-        time_array = utils.np_empty_nan((self.num_recs, self.num_samples))
-        for rec in range(self.num_recs):
-            time_ = core_analysis_methods.generate_time_array(
-                neo_block.segments[rec].analogsignals[0].t_start.magnitude,
-                neo_block.segments[rec].analogsignals[0].t_stop.magnitude,
+
+        if self.num_recs == 1:
+            time_array = core_analysis_methods.generate_time_array(
+                neo_block.segments[0].analogsignals[self.channel_1_idx].t_start.magnitude,
+                neo_block.segments[0].analogsignals[self.channel_1_idx].t_stop.magnitude,
                 self.num_samples,
                 self.ts,
-            )
-            time_array[rec, :] = time_.squeeze()
+            )[np.newaxis, :]
 
-            if not self.channel_times_are_equal(neo_block, rec):
-                channel_time_check = False
+        else:
+
+            time_array = np.zeros((self.num_recs, self.num_samples), dtype=np.float64)
+
+            for rec in range(self.num_recs):
+                time_ = core_analysis_methods.generate_time_array(
+                    neo_block.segments[rec].analogsignals[self.channel_1_idx].t_start.magnitude,
+                    neo_block.segments[rec].analogsignals[self.channel_1_idx].t_stop.magnitude,
+                    self.num_samples,
+                    self.ts,
+                )
+                time_array[rec, :] = time_.squeeze()
+
+                if not self.channel_times_are_equal(neo_block, rec):
+                    channel_time_check = False
 
         # get first and very last time point in case data needs cutting into records
         # (cut_up_data() in data model)
-        t_start = float(neo_block.segments[0].analogsignals[0].t_start)
+        t_start = float(neo_block.segments[0].analogsignals[self.channel_1_idx].t_start)
 
         # convert to float to remove units formatting, zero idx
-        t_stop = float(neo_block.segments[self.num_recs - 1].analogsignals[0].t_stop)
+        t_stop = float(neo_block.segments[self.num_recs - 1].analogsignals[self.channel_1_idx].t_stop)
 
         if not channel_time_check:
             utils.show_messagebox(
@@ -768,26 +957,67 @@ class RawData:
         so it would be very unexpected to find a case in which the timings
         are different.
         """
-        if len(neo_block.segments[rec].analogsignals) == 2:
+        if self.channel_2_idx is not None and len(neo_block.segments[rec].analogsignals) == 2:
             if (
-                neo_block.segments[rec].analogsignals[0].t_start.magnitude
-                != neo_block.segments[rec].analogsignals[1].t_start.magnitude
-                or neo_block.segments[rec].analogsignals[0].t_stop.magnitude
-                != neo_block.segments[rec].analogsignals[1].t_stop.magnitude
+                neo_block.segments[rec].analogsignals[self.channel_1_idx].t_start.magnitude
+                != neo_block.segments[rec].analogsignals[self.channel_2_idx].t_start.magnitude
+                or neo_block.segments[rec].analogsignals[self.channel_1_idx].t_stop.magnitude
+                != neo_block.segments[rec].analogsignals[self.channel_2_idx].t_stop.magnitude
             ):
                 return False
         return True
 
-    def extract_data_from_array(self, data_idx: Int, neo_block: Block) -> NpArray64:
+    def extract_data_from_array(
+        self, data_idx: Int, neo_block: Block, channel_type, channel_units
+    ) -> Tuple[NpArray64, str]:
         """
         extract Im or Vm from neo model (depending on analogsignal idx)
         """
-        array = utils.np_empty_nan((self.num_recs, self.num_samples))
-        for rec in range(self.num_recs):
-            data = neo_block.segments[rec].analogsignals[data_idx].magnitude
-            array[rec, :] = data.squeeze()
+        if self.num_recs == 1:
+            # avoid pointless data copy
+            array = neo_block.segments[0].analogsignals[data_idx].magnitude.T.astype(np.float64)
+            assert array.shape[0] == 1
+        else:
+            array = np.zeros((self.num_recs, self.num_samples), dtype=np.float64)
 
-        return array
+            for rec in range(self.num_recs):
+                data = neo_block.segments[rec].analogsignals[data_idx].magnitude
+                array[rec, :] = data.squeeze()
+
+        final_units = self.scale_array_in_place_if_required(channel_type, channel_units, array)
+
+        return array, final_units
+
+    def load_heka_metadata(self, channel_1_type, channel_1_units, reader):
+        """ """
+        first_channel_offsets = np.array(reader.header["heka_metadata"]["zero_offsets"][self.channel_1_idx])
+
+        if first_channel_offsets is not None:
+            self.scale_array_in_place_if_required(channel_1_type, channel_1_units, array=first_channel_offsets)
+
+        heka_metadata = {
+            "primary_channel_zero_offsets": first_channel_offsets,
+            "add_zero_offset": reader.header["heka_metadata"]["add_zero_offset"],
+        }
+        return heka_metadata
+
+    def scale_array_in_place_if_required(self, channel_type, channel_units, array):
+        """ """
+        assert channel_type in ["Im", "Vm"], "`channel_type` must be `Im` or `Vm`."
+
+        if channel_type == "Im":
+            if channel_units != "pA":
+                conversion_to_pa_table = core_analysis_methods.get_conversion_to_pa_table()
+                array *= conversion_to_pa_table[channel_units]
+            final_units = "pA"
+
+        elif channel_type == "Vm":
+            if channel_units != "mV":
+                conversion_to_mv_table = core_analysis_methods.get_conversion_to_mv_table()
+                array *= conversion_to_mv_table[channel_units]
+            final_units = "mV"
+
+        return final_units
 
     def extract_axon_protocol(self, reader: AxonIO) -> Tuple[NpArray64, str]:
         """
@@ -820,32 +1050,29 @@ class RawData:
             except:
                 utils.show_messagebox(
                     "Axon Protocol Error",
-                    "Could not generate Axon protocol. " "Please contact " "support@easyelectrophysiology.com",
+                    "Could not generate Axon protocol. Please contact support@easyelectrophysiology.com",
                 )
                 return
 
-            self.im_units = im_units
-            self.im_array = im_array
+            self.channel_2_units = im_units
+            self.channel_2_data = im_array
             self.channel_2_type = "Im"
             self.num_data_channels = 2
 
-    def update_tags(self, reader: AxonIO, file_ext: str) -> None:
+    def update_tags(self, reader: AxonIO) -> None:
         """
         Update self.tags with tags (Axon Instruments feature only)
         """
-        if file_ext.upper() == ".ABF":
-            all_tags = ""
-            for i in range(len(reader._axon_info["listTag"])):
-                try:
-                    tag = reader._axon_info["listTag"][i]["sComment"].decode("utf-8").strip() + " "
-                except UnicodeDecodeError:
-                    tag = (
-                        "Could not load tags.\n" "Please contact support@easyelectrophysiology.com " "for more details."
-                    )
-                if i > 0:
-                    tag = "Tag {0}: ".format(str(i + 1)) + tag
-                all_tags += tag
-            self.tags = all_tags
+        all_tags = ""
+        for i in range(len(reader._axon_info["listTag"])):
+            try:
+                tag = reader._axon_info["listTag"][i]["sComment"].decode("utf-8").strip() + " "
+            except UnicodeDecodeError:
+                tag = "Could not load tags.\n" "Please contact support@easyelectrophysiology.com " "for more details."
+            if i > 0:
+                tag = "Tag {0}: ".format(str(i + 1)) + tag
+            all_tags += tag
+        self.tags = all_tags
 
 
 # --------------------------------------------------------------------------------------
@@ -853,27 +1080,26 @@ class RawData:
 # --------------------------------------------------------------------------------------
 
 
-def check_loaded_files_match(main_data: RawData, new_data: RawData) -> Union[Literal[True], List]:
+def check_loaded_files_match(
+    main_data: RawData, new_data: RawData, check_num_samples: bool
+) -> Union[Literal[True], List]:
     """
     Check that that file parameters match (these are files in a
     list of files to be loaded then concatenated together).
     """
     match = True
 
-    if new_data.recording_type != main_data.recording_type:
-        match = ["recording_type", new_data.recording_type, main_data.recording_type]
-
-    elif new_data.channel_1_type != main_data.channel_1_type:
+    if new_data.channel_1_type != main_data.channel_1_type:
         match = ["channel_1_type", new_data.channel_1_type, main_data.channel_1_type]
 
     elif new_data.channel_2_type != main_data.channel_2_type:
         match = ["channel_2_type", new_data.channel_2_type, main_data.channel_2_type]
 
-    elif new_data.vm_units != main_data.vm_units:
-        match = ["vm_units", new_data.vm_units, main_data.vm_units]
+    elif new_data.channel_1_units != main_data.channel_1_units:
+        match = ["channel_1_units", new_data.channel_1_units, main_data.channel_1_units]
 
-    elif new_data.im_units != main_data.im_units:
-        match = ["im_units", new_data.im_units, main_data.im_units]
+    elif new_data.channel_2_units != main_data.channel_2_units:
+        match = ["channel_2_units", new_data.channel_2_units, main_data.channel_2_units]
 
     elif new_data.time_offset != main_data.time_offset:
         match = ["time_offset", new_data.time_offset, main_data.time_offset]
@@ -894,10 +1120,7 @@ def check_loaded_files_match(main_data: RawData, new_data: RawData) -> Union[Lit
     elif new_data.time_units != main_data.time_units:
         match = ["time_units", new_data.time_units, main_data.time_units]
 
-    elif new_data.num_recs != main_data.num_recs:
-        match = ["num_recs", new_data.num_recs, main_data.num_recs]
-
-    elif new_data.num_samples != main_data.num_samples:
+    elif check_num_samples and new_data.num_samples != main_data.num_samples:
         match = ["num_samples", new_data.num_samples, main_data.num_samples]
 
     return match

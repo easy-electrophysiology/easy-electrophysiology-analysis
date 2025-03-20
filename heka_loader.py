@@ -84,10 +84,16 @@ class OpenHeka:
         self.group_idx: Optional[Int] = None
         self.series_idx: Optional[Int] = None
 
-        try:
-            with load_heka.LoadHeka(self.full_filename, only_load_header=True) as self.heka:
-                dict_of_groups_series = self.heka.get_dict_of_group_and_series()
+        self.show_open_heka_dialog()
 
+    def show_open_heka_dialog(self):
+        """
+        Show the open HEKA dialog to allow user to input
+        group and series number.
+        """
+        try:
+            with load_heka.LoadHeka(self.full_filename) as self.heka:
+                dict_of_groups_series = self.heka.get_dict_of_group_and_series()
         except BaseException as e:
             self.mw.show_messagebox("Heka Load Error", e.__str__())
             return
@@ -100,14 +106,22 @@ class OpenHeka:
 
     def get_reader_and_neo_block(
         self,
+        add_zero_offset,
+        stimulus_experimental_mode,
     ) -> Tuple[Union[Literal[False], neo.io.baseio.BaseIO], Union[Literal[False], neo.core.Block]]:
         if self.group_idx is None:
             return False, False
 
-        reader = neo.HekaIO(self.full_filename, self.group_idx, self.series_idx)
+        reader = neo.HekaIO(
+            self.full_filename,
+            group_idx=self.group_idx,
+            series_idx=self.series_idx,
+            add_zero_offset=add_zero_offset,
+            stimulus_experimental_mode=stimulus_experimental_mode,
+        )
 
         try:
-            neo_block = reader.read_block(force_order_to_recording_mode=True)
+            neo_block = reader.read_block()
 
         except BaseException as e:
             self.mw.show_messagebox("Heka Load Error", e.__str__())

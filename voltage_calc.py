@@ -23,6 +23,7 @@ import bottleneck as bn
 import numpy as np
 import scipy.fftpack as fftpack
 from ephys_data_methods import core_analysis_methods
+from scipy import signal
 
 if TYPE_CHECKING:
     from custom_types import Direction, FalseOrFloat, FalseOrIdxFloatFloat, Int, NpArray64
@@ -65,7 +66,7 @@ def clements_bekkers_sliding_window(
 
     params = SimpleNamespace(
         n=n,
-        sum_template_data=np.correlate(data, template, mode="valid"),
+        sum_template_data=signal.correlate(data, template, mode="valid"),
         sum_data=bn.move_sum(data, n)[n - 1 :],
         sum_data2=bn.move_sum(data**2, n)[n - 1 :],
         sum_template=np.sum(template),
@@ -80,7 +81,6 @@ def clements_bekkers_sliding_window(
     betas = np.vstack([offset, scale])
     sst = calc_sst(params)
     r, __ = calculate_r_and_r_squared(sse, sst)
-
     u()
 
     return detection_criterion, betas, r
@@ -184,7 +184,7 @@ def get_filtered_template_data_deconvolution(
     Biophysical Journal. 103(7), 1429-1439.
     """
     num_samples = data.shape[0]
-    pad_template = np.zeros(num_samples)
+    pad_template = np.zeros(num_samples, dtype=np.float64)
     pad_template[0 : template.shape[0]] = template
 
     fft_template = fftpack.fft(pad_template)
@@ -342,14 +342,18 @@ def check_peak_against_threshold_lower(peak_im: NpArray64, peak_idx: Int, run_se
         run_settings["rec"],
     )
     if threshold_type == "rms":
-        baseline, n_times_rms = [
-            threshold_lower["baseline"],
+        baseline_info, n_times_rms = [
+            threshold_lower["baseline_info"],
             threshold_lower["n_times_rms"],
         ]
-        idx = 0 if len(baseline[rec]) == 1 else peak_idx
-        indexed_threshold_lower = (
-            baseline[rec][idx] + n_times_rms[rec] if direction == 1 else baseline[rec][idx] - n_times_rms[rec]
-        )
+        if baseline_info["type"] == "per_event":
+            baseline = baseline_info["baseline"][rec]
+        elif baseline_info["type"] == "manual":
+            baseline = baseline_info["baseline"]
+        elif baseline_info["type"] in ["drawn", "curved"]:
+            baseline = baseline_info["baseline"][rec][peak_idx]
+
+        indexed_threshold_lower = baseline + n_times_rms[rec] if direction == 1 else baseline - n_times_rms[rec]
 
     elif threshold_type == "manual":
         # these are the same for every record (single linear cutoff)
@@ -551,7 +555,6 @@ def enhanced_baseline_calculation(
         event_info["peak"]["idx"],  # type: ignore
         bl_im,
         event_info["peak"]["im"],  # type: ignore
-        run_settings["direction"],
         min_cutoff_perc=consts("foot_detection_low_rise_percent"),
         max_cutoff_perc=consts("foot_detection_high_rise_percent"),
         interp=False,
@@ -575,12 +578,12 @@ def enhanced_baseline_calculation(
     # intersection to the data as the new baseline
     euc_distance = core_analysis_methods.nearest_point_euclidean_distance(foot_time, timepoints, bl_im, datapoints)
 
-    new_bl_idx = np.argmin(euc_distance)
+    new_bl_idx_offset = np.argmin(euc_distance)
 
-    bl_idx += new_bl_idx
-    bl_time = time_[bl_idx]
+    new_bl_idx = bl_idx + new_bl_idx_offset
+    new_bl_time = time_[new_bl_idx]
 
-    return {"idx": bl_idx, "time": bl_time, "im": bl_im}
+    return {"idx": new_bl_idx, "time": new_bl_time, "im": bl_im}
 
 
 def calculate_event_baseline_from_thr(
@@ -643,7 +646,7 @@ def update_baseline_that_is_before_previous_event_peak(
     If event baseline was before the peak of the last baseline, it must
     have been selected in error and means the previous event is very close
     in time and almost certainly a doublet. As such, use the max/min of the
-     data values inbetween the two close peaks as the second event's baseline.
+     data values in-between the two close peaks as the second event's baseline.
     """
     bl_func = np.argmin if run_settings["direction"] == 1 else np.argmax
     bl_idx = bl_func(data[run_settings["previous_event_idx"] : peak_idx + 1])
@@ -681,7 +684,7 @@ def calculate_event_decay_point_entire_search_region(
         decay_idx = peak_idx + window if peak_idx + window < len(data) else len(data) - 1
 
     elif run_settings["next_event_baseline_idx"] < peak_idx:
-        decay_idx, decay_time, decay_im = calculate_event_decay_point_crossover_methods(
+        decay_idx, decay_point_time, decay_point_data = calculate_event_decay_point_crossover_methods(
             time_array,
             data,
             peak_idx,
@@ -690,7 +693,7 @@ def calculate_event_decay_point_entire_search_region(
             window,
             use_legacy=True,
         )
-        return decay_idx, decay_time, decay_im
+        return decay_idx, decay_point_time, decay_point_data
 
     elif peak_idx + window > run_settings["next_event_baseline_idx"]:
         decay_idx = run_settings["next_event_baseline_idx"] - 1
@@ -698,10 +701,10 @@ def calculate_event_decay_point_entire_search_region(
     else:
         decay_idx = peak_idx + window
 
-    decay_time = time_array[decay_idx]
-    decay_im = data[decay_idx]
+    decay_point_time = time_array[decay_idx]
+    decay_point_data = data[decay_idx]
 
-    return decay_idx, decay_time, decay_im
+    return decay_idx, decay_point_time, decay_point_data
 
 
 def decay_point_first_crossover_method(
@@ -735,10 +738,10 @@ def decay_point_first_crossover_method(
     if run_settings["next_event_baseline_idx"] is not None and decay_idx >= run_settings["next_event_baseline_idx"]:
         decay_idx = run_settings["next_event_baseline_idx"] - 1
 
-    decay_time = time_array[decay_idx]
-    decay_im = data[decay_idx]
+    decay_point_time = time_array[decay_idx]
+    decay_point_data = data[decay_idx]
 
-    return decay_idx, decay_time, decay_im
+    return decay_idx, decay_point_time, decay_point_data
 
 
 def calculate_event_decay_point_crossover_methods(
@@ -763,20 +766,20 @@ def calculate_event_decay_point_crossover_methods(
         return False, False, False
 
     offset = (
-        100000 if direction == 1 else -100000
+        1000000 if direction == 1 else -1000000
     )  # ensures data wholly positive or negative (cannot use abs * direction)
     decay_period_data = decay_period_data + offset
-    bl_im += offset
+    offset_bl_im = bl_im + offset
 
     if use_legacy:
         decay_idx = decay_endpoint_legacy_method(decay_period_data, peak_idx, direction)
     else:
-        decay_idx = decay_endpoint_improved_method(decay_period_data, peak_idx, bl_im, direction)
+        decay_idx = decay_endpoint_improved_method(decay_period_data, peak_idx, offset_bl_im, direction)
 
-    decay_time = time_array[decay_idx]
-    decay_im = data[decay_idx]
+    decay_point_time = time_array[decay_idx]
+    decay_point_data = data[decay_idx]
 
-    return decay_idx, decay_time, decay_im
+    return decay_idx, decay_point_time, decay_point_data
 
 
 def decay_endpoint_improved_method(
@@ -863,7 +866,7 @@ def decay_endpoint_legacy_method(decay_period_data: NpArray64, peak_idx: Int, di
 # --------------------------------------------------------------------------------------
 
 
-def calclate_decay_percentage_peak_from_smoothed_decay(
+def calculate_decay_to_point_from_smoothed_decay(
     time_array: NpArray64,
     data: NpArray64,
     peak_idx: Int,
@@ -875,7 +878,7 @@ def calclate_decay_percentage_peak_from_smoothed_decay(
     interp: bool,
 ) -> Tuple[NpArray64, NpArray64, NpArray64, NpArray64, NpArray64]:
     """
-    To increase speed there is the option to not fit a exp to decay.
+    To increase speed there is the option to not fit an exponential to decay.
     In this instance we need to calculate the decay percentage point from the data.
     However, when there is noise this works poorly. Thus smooth before.
 
@@ -893,33 +896,30 @@ def calclate_decay_percentage_peak_from_smoothed_decay(
         interp - bool, to 200 kHz interp or not
 
     OUTPUTS:
-        decay_percent_time: timepoint of the decay %
-        decay_percent_im: data point of the decay %
-        decay_time_ms: time in ms of decay_percent point - peak
+        decay_timepoint: timepoint of the decay %
+        decay_value: data point of the decay %
+        decay_time_ms: decay time in ms
         raw_smoothed_decay_time: uninterpolated decay period time, used for
         calculating half-width
-        raw_smoothed_decay_im: uninterpolated decay period data, used for calcualting
+        raw_smoothed_decay_im: uninterpolated decay period data, used for calculating
         half-width
     """
-    peak_time = time_array[peak_idx]
+    (
+        peak_time,
+        smoothed_decay_time,
+        smoothed_decay_im,
+        raw_smoothed_decay_time,
+        raw_smoothed_decay_im,
+    ) = get_decay_data_for_smoothed_decay(
+        time_array,
+        data,
+        peak_idx,
+        decay_idx,
+        smooth_window_samples,
+        interp,
+    )
 
-    decay_im = data[peak_idx : decay_idx + 1]
-
-    if smooth_window_samples > len(decay_im):
-        smooth_window_samples = len(decay_im)
-    elif smooth_window_samples == 0:
-        smooth_window_samples = 1
-
-    smoothed_decay_im = quick_moving_average(decay_im, smooth_window_samples)
-    smoothed_decay_time = time_array[peak_idx : decay_idx + 1]
-
-    if interp:
-        (
-            smoothed_decay_im,
-            smoothed_decay_time,
-        ) = core_analysis_methods.twohundred_kHz_interpolate(smoothed_decay_im, smoothed_decay_time)
-
-    (decay_percent_time, decay_percent_im, decay_time_ms,) = find_nearest_decay_sample_to_amplitude(
+    (decay_timepoint, decay_value, decay_time_ms,) = find_nearest_decay_sample_to_amplitude(
         smoothed_decay_time,
         smoothed_decay_im,
         peak_time,
@@ -928,20 +928,105 @@ def calclate_decay_percentage_peak_from_smoothed_decay(
         amplitude_percent_cutoff,
     )
 
-    raw_smoothed_decay_time = time_array[peak_idx : decay_idx + 1]  # have to re-init in case was interpolated
-
-    raw_smoothed_decay_im = quick_moving_average(decay_im, smooth_window_samples)
-
     return (
-        decay_percent_time,
-        decay_percent_im,
+        decay_timepoint,
+        decay_value,
         decay_time_ms,
         raw_smoothed_decay_time,
         raw_smoothed_decay_im,
     )
 
 
-def calclate_decay_percentage_peak_from_exp_fit(
+def calculate_decay_cutoff_for_smoothed_decay(
+    time_array: NpArray64,
+    data_array: NpArray64,
+    peak_idx: Int,
+    decay_idx: Int,
+    bl_im: NpArray64,
+    ev_amplitude: NpArray64,
+    smooth_window_samples: Int,
+    min_cutoff_perc: NpArray64,
+    max_cutoff_perc: NpArray64,
+    interp: bool,
+):
+    """
+    Calculate the decay percent time (e.g. 10-90) on
+    raw data (i.e. not exponential) with optional smoothing
+    and interpolation of decay period before calculation.
+
+    INPUTS:
+        time_array : full record time array
+        data_array : full record data array
+        peak_idx : index of event peak
+        decay_idx : index of event decay point
+        bl_im : data value at the baseline
+        ev_amplitude : event amplitude
+        smooth_window_samples : number of samples to smooth over the decay period
+        min_cutoff_perc : minimum decay percent cutoff
+        max_cutoff_perc : maximum decay percent cutoff
+        interp : interpolate the decay period prior to decay time calculation
+
+    RETURNS:
+        see find_multiple_decay_sample_percentages()
+    """
+    (
+        _,
+        smoothed_decay_time,
+        smoothed_decay_im,
+        raw_smoothed_decay_time,
+        raw_smoothed_decay_im,
+    ) = get_decay_data_for_smoothed_decay(
+        time_array,
+        data_array,
+        peak_idx,
+        decay_idx,
+        smooth_window_samples,
+        interp,
+    )
+
+    return find_multiple_decay_sample_percentages(
+        smoothed_decay_time, smoothed_decay_im, bl_im, ev_amplitude, 100 - min_cutoff_perc, 100 - max_cutoff_perc
+    ) + (smoothed_decay_time, smoothed_decay_im)
+
+
+def get_decay_data_for_smoothed_decay(
+    time_array,
+    data_array,
+    peak_idx,
+    decay_idx,
+    smooth_window_samples,
+    interp,
+):
+    """
+    Process the raw decay period (i.e. not an exponential fit) by
+    (optionally) smoothing and/or interpolating.
+
+    See calculate_decay_cutoff_for_smoothed_decay for arguments.
+    """
+    peak_time = time_array[peak_idx]
+    decay_data = data_array[peak_idx : decay_idx + 1]
+
+    if smooth_window_samples > len(decay_data):
+        smooth_window_samples = len(decay_data)
+    elif smooth_window_samples == 0:
+        smooth_window_samples = 1
+
+    smoothed_decay_time = time_array[peak_idx : decay_idx + 1]
+    smoothed_decay_im = quick_moving_average(decay_data, smooth_window_samples)
+
+    raw_smoothed_decay_time = time_array[peak_idx : decay_idx + 1]  # have to re-init in case was interpolated
+    raw_smoothed_decay_im = quick_moving_average(decay_data, smooth_window_samples)
+
+    if interp:
+        (
+            smoothed_decay_im,
+            smoothed_decay_time,
+        ) = core_analysis_methods.twohundred_kHz_interpolate(smoothed_decay_im, smoothed_decay_time)
+
+    return peak_time, smoothed_decay_time, smoothed_decay_im, raw_smoothed_decay_time, raw_smoothed_decay_im
+
+
+def calclate_decay_to_point_from_exp_fit(
     decay_exp_fit_time: NpArray64,
     decay_exp_fit_im: NpArray64,
     peak_time: NpArray64,
@@ -951,8 +1036,9 @@ def calclate_decay_percentage_peak_from_exp_fit(
     interp: bool,
 ) -> Tuple[NpArray64, ...]:
     """
-    Find the nearest sample on the decay to the specified amplitude_percent_cutoff.
-    This uses the decay monoexp fit if available for increased temporal resolution
+    Find the nearest sample on the decay to the specified amplitude_percent_cutoff
+    for the calculation of decay time. This uses the decay monoexp fit
+    for increased temporal resolution
 
     INPUTS:
         decay_exp_fit_time - 1 x time array of timepoints between peak and decay end
@@ -965,7 +1051,7 @@ def calclate_decay_percentage_peak_from_exp_fit(
         interp - bool, to 200 kHz interp or not
 
         See find_event_peak_after_smoothing() for other inputs and
-        calclate_decay_percentage_peak_from_smoothed_decay()
+        calculate_decay_to_point_from_smoothed_decay()
         for outputs
     """
     if interp:
@@ -974,7 +1060,7 @@ def calclate_decay_percentage_peak_from_exp_fit(
             decay_exp_fit_time,
         ) = core_analysis_methods.twohundred_kHz_interpolate(decay_exp_fit_im, decay_exp_fit_time)
 
-    (decay_percent_time, decay_percent_im, decay_time_ms,) = find_nearest_decay_sample_to_amplitude(
+    (decay_timepoint, decay_value, decay_time_ms,) = find_nearest_decay_sample_to_amplitude(
         decay_exp_fit_time,
         decay_exp_fit_im,
         peak_time,
@@ -983,33 +1069,122 @@ def calclate_decay_percentage_peak_from_exp_fit(
         amplitude_percent_cutoff,
     )
 
-    return decay_percent_time, decay_percent_im, decay_time_ms
+    return decay_timepoint, decay_value, decay_time_ms
+
+
+def calculate_decay_cutoff_for_exp_fit(
+    decay_exp_fit_time: NpArray64,
+    decay_exp_fit_im: NpArray64,
+    bl_im: NpArray64,
+    ev_amplitude: NpArray64,
+    min_cutoff_perc: NpArray64,
+    max_cutoff_perc: NpArray64,
+    interp: bool,
+):
+    """
+    Calculate the single decay cutoff point on an exponential
+    fit of the decay.
+
+    INPUTS:
+        decay_exp_fit_time : 1D numpy array of decay period time
+        decay_exp_fit_im : 1D numpy array of decay period data
+        bl_im : baseline value for the associated event
+        ev_amplitude : event ampltiude
+        min_cutoff_perc : minimum amplitude cutoff (%)
+        max_cutoff_perc : maximum amplitude cutoff (%)
+        interp : interpolate the fit before calculating decay time
+    """
+    if interp:
+        (
+            decay_exp_fit_im,
+            decay_exp_fit_time,
+        ) = core_analysis_methods.twohundred_kHz_interpolate(decay_exp_fit_im, decay_exp_fit_time)
+
+    return find_multiple_decay_sample_percentages(
+        decay_exp_fit_time, decay_exp_fit_im, bl_im, ev_amplitude, 100 - min_cutoff_perc, 100 - max_cutoff_perc
+    )
+
+
+def find_multiple_decay_sample_percentages(
+    time_array: NpArray64,
+    data_array: NpArray64,
+    bl_im: NpArray64,
+    ev_amplitude: NpArray64,
+    amplitude_min: Union[Int, NpArray64],
+    amplitude_max: Union[Int, NpArray64],
+) -> Tuple[NpArray64, ...]:
+    """
+    Find the decay time by taking the difference in time between two points
+    at a percentage of the amplitude decay, typically 10-90.
+
+    INPUTS:
+        time_array : 1D numpy array of decay period time
+        data_array : 1D numpy array of decay period data
+        bl_im : baseline value for the associated event
+        ev_amplitude : event ampltiude
+        amplitude_min : minimum amplitude cutoff (%)
+        amplitude_max : maximum amplitude cutoff (%)
+
+    RETURNS:
+        min_time : time at the minimum cutoff
+        min_data : data value at the minimum cutoff
+        max_time : time at the max cutoff
+        max_data : data value at the max cutoff
+        decay_time : measured decay time, max_time - min_time
+    """
+    nearest_im_to_amp_idx_1 = get_closest_sample_to_percent_decay(data_array, amplitude_min, bl_im, ev_amplitude)
+    nearest_im_to_amp_idx_2 = get_closest_sample_to_percent_decay(data_array, amplitude_max, bl_im, ev_amplitude)
+
+    min_time = time_array[nearest_im_to_amp_idx_1]
+    min_data = data_array[nearest_im_to_amp_idx_1]
+
+    max_time = time_array[nearest_im_to_amp_idx_2]
+    max_data = data_array[nearest_im_to_amp_idx_2]
+
+    time_diff = max_time - min_time
+
+    return min_time, min_data, max_time, max_data, time_diff
 
 
 def find_nearest_decay_sample_to_amplitude(
-    decay_time: NpArray64,
-    decay_im: NpArray64,
+    time_array: NpArray64,
+    data_array: NpArray64,
     peak_time: NpArray64,
     bl_im: NpArray64,
     ev_amplitude: NpArray64,
     amplitude_percent_cutoff: NpArray64,
 ) -> Tuple[NpArray64, ...]:
     """
-    For calculating the decay %, find the nearest datapoint to the decay %.
+    For calculating the decay time, find the nearest datapoint to the decay %.
 
     e.g. if user has set decay % to 37%, we want to find the datapoint that is 37% of
     the decay amplitude. This might not be an exact sample so find the nearest.
-    See calculate_decay_percentage_peak_from_smoothed_decay for input / output.
+    See calculate_decay_to_point_from_smoothed_decay for input / output.
+    """
+    nearest_im_to_amp_idx = get_closest_sample_to_percent_decay(
+        data_array, amplitude_percent_cutoff, bl_im, ev_amplitude
+    )
+    decay_value = data_array[nearest_im_to_amp_idx]
+    decay_timepoint = time_array[nearest_im_to_amp_idx]
+    decay_time_ms = (decay_timepoint - peak_time) * 1000
+
+    return decay_timepoint, decay_value, decay_time_ms
+
+
+def get_closest_sample_to_percent_decay(
+    data_array: NpArray64,
+    amplitude_percent_cutoff: Union[Int, NpArray64],
+    bl_im: NpArray64,
+    ev_amplitude: NpArray64,
+):
+    """
+    Given data (a 1d numy array) typically the rise or falling phase
+    of an event, find the datapoint that is at the amplitude_percent_cutoff.
     """
     amplitude_fraction = amplitude_percent_cutoff / 100
     amplitude_fraction = bl_im + ev_amplitude * amplitude_fraction
-
-    nearest_im_to_amp_idx = np.argmin(np.abs(decay_im - amplitude_fraction))
-    decay_percent_im = decay_im[nearest_im_to_amp_idx]
-    decay_percent_time = decay_time[nearest_im_to_amp_idx]
-    decay_time_ms = (decay_percent_time - peak_time) * 1000
-
-    return decay_percent_time, decay_percent_im, decay_time_ms
+    nearest_im_to_amp_idx = np.argmin(np.abs(data_array - amplitude_fraction))
+    return nearest_im_to_amp_idx
 
 
 def calculate_event_rise_time(
@@ -1019,28 +1194,30 @@ def calculate_event_rise_time(
     peak_idx: Int,
     bl_im: NpArray64,
     peak_im: NpArray64,
-    direction: Direction,
     min_cutoff_perc: Union[Int, NpArray64],
     max_cutoff_perc: Union[Int, NpArray64],
     interp: bool = False,
 ) -> Tuple[NpArray64, ...]:
     """
-    Calculate the rise time of the event using core_analysis_methods (see these
-    methods for input / outputs)
+    Calculate the rise time of the event using core_analysis_methods
+    (see these methods for input / outputs)
     """
     ev_data = data[bl_idx : peak_idx + 1]
     ev_time = time_array[bl_idx : peak_idx + 1]
 
-    calculate_slope_func = (
-        core_analysis_methods.calc_rising_slope_time
-        if direction == 1
-        else core_analysis_methods.calc_falling_slope_time
+    if interp:
+        (
+            ev_data,
+            ev_time,
+        ) = core_analysis_methods.twohundred_kHz_interpolate(ev_data, ev_time)
+
+    ev_amplitude = peak_im - bl_im
+
+    min_time, min_data, max_time, max_data, rise_time = find_multiple_decay_sample_percentages(  # TOOD: rename
+        ev_time, ev_data, bl_im, ev_amplitude, min_cutoff_perc, max_cutoff_perc
     )
 
-    max_time, max_data, min_time, min_data, rise_time = calculate_slope_func(
-        ev_data, ev_time, bl_im, peak_im, min_cutoff_perc, max_cutoff_perc, interp
-    )
-    return max_time, max_data, min_time, min_data, rise_time
+    return (min_time, min_data, max_time, max_data, rise_time)
 
 
 # --------------------------------------------------------------------------------------
@@ -1073,7 +1250,7 @@ def is_at_least_zero(start_idx: Int) -> Int:
     return start_idx
 
 
-def normalise_amplitude(data, demean=False):
+def normalise_amplitude(data: NpArray64, demean: bool = False) -> NpArray64:
     """
     Scale to unity amplitude with optional demean.
 

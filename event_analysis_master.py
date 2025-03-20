@@ -21,8 +21,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import scipy.signal
-from easye_cython_code._vendored.scipy import _peak_finding_utils
-from ephys_data_methods import core_analysis_methods, current_calc, voltage_calc
+from ephys_data_methods import ap_detection_methods, core_analysis_methods, voltage_calc
 from utils import utils
 
 if TYPE_CHECKING:
@@ -35,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def fit_sliding_window(
-    im_array: NpArray64, run_settings: Dict, progress_bar_callback: Callable
+    data_array: NpArray64, run_settings: Dict, progress_bar_callback: Callable
 ) -> Tuple[NpArray64, NpArray64]:
     """
     Calculate the sliding window correlation or detection criterion using the
@@ -49,7 +48,7 @@ def fit_sliding_window(
     template = make_template_from_run_settings(run_settings, override_b1=1, normalise=False)
 
     detection_criterion, betas, r = voltage_calc.clements_bekkers_sliding_window(
-        im_array, template, progress_bar_callback
+        data_array, template, progress_bar_callback
     )
 
     detection_coefs = r if run_settings["detection_threshold_type"] == "correlation" else abs(detection_criterion)
@@ -138,19 +137,21 @@ def normalise_template(data: NpArray64, direction: Direction) -> NpArray64:
 
 
 def events_thresholding_get_putative_peaks(
-    im_array: NpArray64, min_distance_between_maxima_samples: Int, direction: Direction
+    data_array: NpArray64, min_distance_between_maxima_samples: Int, direction: Direction
 ) -> Union[Literal[False], NDArray[np.integer]]:
     """
     Find peaks using the thresholding method.
 
     Make all events positive before passing to scipy find_peaks.
     """
-    putative_peaks_idx = scipy.signal.find_peaks(im_array * direction, distance=min_distance_between_maxima_samples)[0]
+    putative_peak_idxs = scipy.signal.find_peaks(data_array * direction, distance=min_distance_between_maxima_samples)[
+        0
+    ]
 
-    if not np.any(putative_peaks_idx):
+    if not np.any(putative_peak_idxs):
         return False
 
-    return putative_peaks_idx
+    return putative_peak_idxs
 
 
 # --------------------------------------------------------------------------------------
@@ -162,7 +163,7 @@ def calculate_event_peaks(
     detection_coefs: NpArray64,
     betas: Optional[NpArray64],
     time_array: NpArray64,
-    im_array: NpArray64,
+    data_array: NpArray64,
     run_settings: Dict,
 ) -> Dict:
     """
@@ -179,74 +180,43 @@ def calculate_event_peaks(
     We now have a situation where consecutive events are retained but sometimes padded
     with nans depending on the odd correlation value that may not have been over
     threshold e.g. [nan nan -1 -20 -30 -40 -30 -20 nan -1 nan nan]. We need to smooth
-    over these gaps and then find the peak of all contiguous events. This is done in
-    current_calc.index_out_continuous_above_threshold_samples(). A smoothing window
+    over these gaps and then find the peak of all contiguous events.  A smoothing window
     of half the sliding window works well across event types.
 
     Now we are left with chunked contiguous events stored in the above_threshold_ev.
     We finally cycle through these, Find their peak and other information and check
     they are above our linear or dynamic Im threshold. If so save to self.event_info.
     """
-    detection_coefs = null_wrong_direction_peaks(detection_coefs, betas, run_settings)
-
     thr = get_detection_threshold(run_settings)
 
-    peaks = utils.np_empty_nan(len(detection_coefs))
-    peaks[np.where(detection_coefs > thr)] = im_array[np.where(detection_coefs > thr)]
+    detection_coefs = null_wrong_direction_peaks(detection_coefs, betas, run_settings)
 
     if run_settings["detection_threshold_type"] == "deconvolution":
-        cum_event_index = current_calc.index_out_continuous_above_threshold_samples(peaks)
-        peaks_idx = get_peaks_for_deconvolution(detection_coefs, cum_event_index, im_array, run_settings)
+        peak_idxs = ap_detection_methods.index_peaks_above_threshold(detection_coefs, detection_coefs, thr, "positive")
+        peak_idxs = get_peaks_for_deconvolution(peak_idxs, data_array, run_settings)
     else:
-        peaks_idx = sliding_window_peak_detection(im_array, peaks, run_settings)
+        smoothing_window = int(run_settings["window_len_samples"] * 0.5)
+        event_dir = "positive" if run_settings["direction"] == 1 else "negative"
 
-    peaks_idx = exclude_peaks_idx_based_on_local_maximum_period(
-        peaks_idx, im_array[peaks_idx], run_settings["min_distance_between_maxima_samples"]
+        peak_idxs = ap_detection_methods.index_peaks_above_threshold(
+            detection_coefs, data_array, thr, event_dir, smoothing_window
+        )
+
+    # If direction is negative, flip the Im so max peaks are detected
+    peak_idxs = core_analysis_methods.exclude_peak_idxs_based_on_local_maximum_period(
+        peak_idxs,
+        data_array[peak_idxs] * run_settings["direction"],
+        run_settings["min_distance_between_maxima_samples"],
     )
 
-    event_info = make_peak_event_info_from_peaks_idx(time_array, im_array, peaks_idx, run_settings)
+    event_info = make_peak_event_info_from_peak_idxs(time_array, data_array, peak_idxs, run_settings)
+
     return event_info
 
 
-def exclude_peaks_idx_based_on_local_maximum_period(
-    peaks_idx: NDArray[np.integer], peaks_im: NpArray64, min_distance: Int
-) -> NDArray[np.integer]:
-    """
-    Exclude peaks using SciPy's _select_peak_by_distance algorithm that underpins Scipy's find_peaks `distance`
-    argument. This is used for Template analysis, ensuring distance exclusions are performed similarly
-    for Template and Threshold analysis.
-
-    INPUTS
-    ------
-    peaks_idx : Numpy array of event peak indicies
-    peaks_im : Numpy array of event peak data values
-    min_distance : minimum distance in samples that must separate peaks
-    """
-    keep = _peak_finding_utils._select_by_peak_distance(peaks_idx.astype(np.intp), peaks_im * -1, float(min_distance))
-    return peaks_idx[keep]  # type: ignore
-
-
-def sliding_window_peak_detection(im_array: NpArray64, peaks: NpArray64, run_settings: Dict) -> NDArray[np.integer]:
-    """
-    Legacy method for event detection - in the end smoothing the
-    correlation coefficient / detection criteria decreased the temporal
-    resolution. Further, a more robust method of peak detection is
-    implemented based on the expected difference from baseline to peak,
-    based on deconvolution methods.
-    """
-    smoothing_window = int(run_settings["window_len_samples"] * 0.5)
-
-    cum_event_index = current_calc.index_out_continuous_above_threshold_samples(peaks, smooth=smoothing_window)
-
-    event_dir = "positive" if run_settings["direction"] == 1 else "negative"
-    peaks_idx = current_calc.get_peaks_idx_from_cum_idx(cum_event_index, im_array, event_dir)
-    return peaks_idx
-
-
 def get_peaks_for_deconvolution(
-    deconvolution: NpArray64,
-    cum_event_index: NpArray64,
-    im_array: NpArray64,
+    deconv_peak_idxs: NDArray[np.integer],
+    data_array: NpArray64,
     run_settings: Dict,
 ) -> NDArray[np.integer]:
     """
@@ -256,29 +226,27 @@ def get_peaks_for_deconvolution(
     3x ( "deconv_peak_search_region_multiplier") the number of samples from
     baseline to peak.
     """
-    deconv_peaks_idx = current_calc.get_peaks_idx_from_cum_idx(cum_event_index, deconvolution, "positive")
-
     peak_find_func = np.argmin if run_settings["direction"] == -1 else np.argmax
     bl_to_peak = estimate_bl_to_peak_from_template(run_settings)
     search_region = int(bl_to_peak) * voltage_calc.consts("deconv_peak_search_region_multiplier")
 
     # cut idx that are out of data range,
     # reshape into peak_num x peak: peak + search region indices
-    deconv_peaks_idx = np.delete(deconv_peaks_idx, np.where(deconv_peaks_idx + search_region > len(im_array)))
-    deconv_peaks_idx = np.atleast_2d(deconv_peaks_idx).T
-    peak_search_region = deconv_peaks_idx + np.arange(search_region)
+    deconv_peak_idxs = np.delete(deconv_peak_idxs, np.where(deconv_peak_idxs + search_region > len(data_array)))
+    deconv_peak_idxs = np.atleast_2d(deconv_peak_idxs).T
+    peak_search_region = deconv_peak_idxs + np.arange(search_region)
 
-    ev_peak_idxs = peak_find_func(im_array[peak_search_region], axis=1)
+    ev_peak_idxs = peak_find_func(data_array[peak_search_region], axis=1)
 
-    peaks_idx = deconv_peaks_idx.squeeze() + ev_peak_idxs
+    peak_idxs = deconv_peak_idxs.squeeze() + ev_peak_idxs
 
-    return peaks_idx
+    return peak_idxs
 
 
-def make_peak_event_info_from_peaks_idx(
+def make_peak_event_info_from_peak_idxs(
     time_: NpArray64,
     data: NpArray64,
-    peaks_idx: Union[List[Int], NDArray[np.integer]],
+    peak_idxs: Union[List[Int], NDArray[np.integer]],
     run_settings: Dict,
 ) -> Dict:
     """
@@ -291,18 +259,26 @@ def make_peak_event_info_from_peaks_idx(
     Ued both for events analysis and curve_fitting analysis fit biexpoential_event
     For curve fitting and average event, omitting times / baseline settings for whole
     record are not required.
+
+    TODO
+    ----
+    `direction` and `records_are_contiguous` should be moved to analysis-wide property
+    rather than an individual event property, as is the same for all events.
+    Once one more cases like this occurs, perform a big refactor of
+    `event_info` to contain a analysis-wide property field.
     """
     event_info = {}
-    for peak_idx in peaks_idx:
+    for peak_idx in peak_idxs:
         peak_time = time_[peak_idx]
         peak_im = data[peak_idx]
         template_num = run_settings["template_num"] if "template_num" in run_settings else None
 
         if run_settings["average_peak_points"]["on"]:
             peak_idx, peak_time, peak_im = smooth_peak(time_, data, peak_idx, run_settings)
+
         if run_settings["name"] == "event_kinetics":
             if "manual_select" not in run_settings or run_settings["manual_select"]["use_thresholding"]:
-                success = check_putative_event(peak_idx, peak_time, peak_im, run_settings)
+                success = check_putative_event(peak_idx, peak_time, peak_im, time_, run_settings)
 
                 if not success:
                     continue
@@ -314,6 +290,7 @@ def make_peak_event_info_from_peaks_idx(
                 "idx": peak_idx,
                 "template_num": template_num,
                 "direction": run_settings["direction"],
+                "records_are_contiguous": run_settings["records_are_contiguous"],
             }
         }
 
@@ -322,8 +299,8 @@ def make_peak_event_info_from_peaks_idx(
 
 def null_wrong_direction_peaks(detection_coefs: NpArray64, betas: Optional[NpArray64], run_settings: Dict) -> NpArray64:
     """
-    Cut anywhere the events are in the wrong direction for sliding window,
-    otherwise anywhere the DC is negative (non-events)
+    Cut anywhere the detection coefficients are high in a region where
+    the beta are very negative, we only want positive correlation.
     """
     if run_settings["detection_threshold_type"] == "deconvolution":
         pass
@@ -382,7 +359,9 @@ def smooth_peak(
     return peak_idx, peak_time, peak_im
 
 
-def check_putative_event(peak_idx: Int, peak_time: NpArray64, peak_im: NpArray64, run_settings: Dict) -> bool:
+def check_putative_event(
+    peak_idx: Int, peak_time: NpArray64, peak_im: NpArray64, time_: NpArray64, run_settings: Dict
+) -> bool:
     """
     Check if an event peak is within user-specified thresholds
     (e.g. threshold lower, omit times). Return False if event
@@ -395,8 +374,24 @@ def check_putative_event(peak_idx: Int, peak_time: NpArray64, peak_im: NpArray64
                            threshold (this is input via spinbox)
     """
     if np.any(run_settings["omit_start_stop_times"]):
-        for start, stop in run_settings["omit_start_stop_times"]:
-            if start < peak_time < stop:
+
+        if run_settings["omit_start_stop_include_exclude"] == "exclude":
+            for start, stop in run_settings["omit_start_stop_times"]:
+
+                start_time, stop_time = get_events_omit_start_stop_time(start, stop, run_settings, time_)
+                if start_time < peak_time < stop_time:
+                    return False
+        else:
+            include_periods = []
+            for start, stop in run_settings["omit_start_stop_times"]:
+
+                start_time, stop_time = get_events_omit_start_stop_time(start, stop, run_settings, time_)
+                if start_time < peak_time < stop_time:
+                    include_periods.append(True)
+                else:
+                    include_periods.append(False)
+
+            if not any(include_periods):
                 return False
 
     within_threshold = voltage_calc.check_peak_against_threshold_lower(peak_im, peak_idx, run_settings)
@@ -415,12 +410,25 @@ def check_putative_event(peak_idx: Int, peak_time: NpArray64, peak_im: NpArray64
     return True
 
 
-def calculate_rms(im_array: NpArray64, n_times: Int, baseline: NpArray64) -> Tuple[NpArray64, NpArray64]:
-    num_samples = len(im_array)
-    mse = np.sum((baseline - im_array) ** 2) / num_samples
+def get_events_omit_start_stop_time(start, stop, run_settings, time_):
+    start_time = start if run_settings["omit_start_stop_mode"] == "absolute" else time_[0] + start
+    stop_time = stop if run_settings["omit_start_stop_mode"] == "absolute" else time_[0] + stop
+    return start_time, stop_time
+
+
+# ---------------------------------------------------------------------------------------
+# RMS
+# --------------------------------------------------------------------------------------
+
+
+def calculate_rms(data: NpArray64, baseline: NpArray64) -> Tuple[NpArray64, NpArray64]:
+    """ """
+    assert isinstance(baseline, float) or baseline.size == 1 or data.size == baseline.size, (
+        "`data` and `baseline` must be of same size for RMS calculation, " "or `baseline` must be scalar."
+    )
+    mse = np.sum((baseline - data) ** 2) / data.size
     rms = np.sqrt(mse)
-    n_times_rms = rms * n_times
-    return rms, n_times_rms
+    return rms
 
 
 # --------------------------------------------------------------------------------------
@@ -435,7 +443,9 @@ def calculate_event_kinetics(
     peak_time: NpArray64,
     peak_im: NpArray64,
     template_num: Int,
+    records_are_contiguous: bool,
     run_settings: Dict,
+    info: Optional[Dict] = None,
 ) -> FalseOrDict:
     """
     Calculate all event kinetics the peak info.
@@ -443,12 +453,16 @@ def calculate_event_kinetics(
     event_info = make_event_info_dict()
     event_info["record_num"]["rec_idx"] = run_settings["rec"]
 
+    if info:
+        event_info["info"] = info  # TODO: this is so fucking jenky...
+
     # Peak
     event_info["peak"] = {
         "idx": peak_idx,
         "time": peak_time,
         "im": peak_im,
         "template_num": template_num,
+        "records_are_contiguous": records_are_contiguous,
     }
 
     # Baseline
@@ -712,9 +726,12 @@ def caculate_decay_and_fit_monoexp_or_biexp(
         # overwrite the end Im point Im to the fit not data, this is cosmetic
         event_info["decay_point"]["im"] = event_info[event_info_key]["fit_im"][-1]
 
-    # Decay %
-    event_info["decay_perc"] = calculate_decay_percent(time_, data, event_info, run_settings)
-    if event_info["decay_perc"] is False:
+    # Decay Time
+    event_info["decay_one_point"], event_info["decay_between_points"] = calculate_decay_time(
+        time_, data, event_info, run_settings
+    )
+    # One is always False / None, if both are False / None then it failed.
+    if not event_info["decay_one_point"] and not event_info["decay_between_points"]:
         return
 
     return True
@@ -1050,7 +1067,9 @@ def get_initial_est_for_biexp_fit(x_to_fit: NpArray64, y_to_fit: NpArray64, run_
 # --------------------------------------------------------------------------------------
 
 
-def calculate_decay_percent(time_: NpArray64, data: NpArray64, event_info: Dict, run_settings: Dict) -> FalseOrDict:
+def calculate_decay_time(
+    time_: NpArray64, data: NpArray64, event_info: Dict, run_settings: Dict
+) -> Tuple[Optional[FalseOrDict], Optional[FalseOrDict]]:
     """
     Find the decay point that is at the user-specified percent of the event amplitude.
     If a monoexponential or biexpoential is fit to the event, use this to find the %
@@ -1058,27 +1077,78 @@ def calculate_decay_percent(time_: NpArray64, data: NpArray64, event_info: Dict,
     """
     peak_idx = event_info["peak"]["idx"]
 
+    if run_settings["decay_times_baseline"] == "baseline":
+        base_im = event_info["baseline"]["im"]
+    else:
+        base_im = event_info["decay_point"]["im"]
+
     if run_settings["decay_or_biexp_fit_method"] == "do_not_fit":
         smooth_window_samples = core_analysis_methods.quick_get_time_in_samples(
             run_settings["ts"], run_settings["decay_period_smooth_s"]
         )
-        (
-            decay_percent_time,
-            decay_percent_im,
-            decay_time_ms,
-            smoothed_decay_time,
-            smoothed_decay_im,
-        ) = voltage_calc.calclate_decay_percentage_peak_from_smoothed_decay(
-            time_,
-            data,
-            peak_idx,
-            event_info["decay_point"]["idx"],
-            event_info["baseline"]["im"],
-            smooth_window_samples,
-            event_info["amplitude"]["im"],
-            run_settings["decay_amplitude_percent"],
-            run_settings["interp_200khz"],
-        )
+
+        if run_settings["decay_mode"] == "decay_one_point":
+            (
+                decay_timepoint,
+                decay_value,
+                decay_time_ms,
+                smoothed_decay_time,
+                smoothed_decay_im,
+            ) = voltage_calc.calculate_decay_to_point_from_smoothed_decay(
+                time_,
+                data,
+                peak_idx,
+                event_info["decay_point"]["idx"],
+                base_im,
+                smooth_window_samples,
+                event_info["amplitude"]["im"],
+                run_settings["decay_amplitude_percent"],
+                run_settings["interp_200khz"],
+            )
+
+            decay_perc_results = {
+                "time": decay_timepoint,
+                "im": decay_value,
+                "decay_time_ms": decay_time_ms,
+                "smoothed_decay_time": smoothed_decay_time,
+                "smoothed_decay_im": smoothed_decay_im,
+            }
+            decay_cutoff_results = None
+
+        elif run_settings["decay_mode"] == "decay_between_points":
+
+            (
+                min_time,
+                min_data,
+                max_time,
+                max_data,
+                decay_time,
+                smoothed_decay_time,
+                smoothed_decay_im,
+            ) = voltage_calc.calculate_decay_cutoff_for_smoothed_decay(
+                time_,
+                data,
+                peak_idx,
+                event_info["decay_point"]["idx"],
+                base_im,
+                event_info["amplitude"]["im"],
+                smooth_window_samples,
+                run_settings["decay_cutoff_low"],
+                run_settings["decay_cutoff_high"],
+                run_settings["interp_200khz"],
+            )
+
+            decay_cutoff_results = {
+                "min_time": min_time,
+                "min_im": min_data,
+                "max_time": max_time,
+                "max_im": max_data,
+                "decay_time_ms": decay_time * 1000,
+                "smoothed_decay_time": smoothed_decay_time,
+                "smoothed_decay_im": smoothed_decay_im,
+            }
+            decay_perc_results = None
+
     else:
         if "from_fit_not_data" in run_settings and run_settings["from_fit_not_data"]:
             decay_period_time = time_[peak_idx:]
@@ -1094,37 +1164,58 @@ def calculate_decay_percent(time_: NpArray64, data: NpArray64, event_info: Dict,
                 decay_period_data,
             ) = get_biexp_function_rise_and_decay_period(event_info["biexp_fit"], run_settings["direction"], "decay")
             if len(decay_period_time) < 3:
-                return False
-
-        try:  # TODO: in the rarest of instances no conditional is met and decay
-            # percent time is not defined
-            (
-                decay_percent_time,
-                decay_percent_im,
-                decay_time_ms,
-            ) = voltage_calc.calclate_decay_percentage_peak_from_exp_fit(
-                decay_period_time,
-                decay_period_data,
-                event_info["peak"]["time"],
-                event_info["baseline"]["im"],
-                event_info["amplitude"]["im"],
-                run_settings["decay_amplitude_percent"],
-                run_settings["interp_200khz"],
-            )
-        except:
-            return False
+                return False, False
 
         smoothed_decay_time = smoothed_decay_im = None
 
-    decay_perc_results = {
-        "time": decay_percent_time,
-        "im": decay_percent_im,
-        "decay_time_ms": decay_time_ms,
-        "smoothed_decay_time": smoothed_decay_time,
-        "smoothed_decay_im": smoothed_decay_im,
-    }
+        if run_settings["decay_mode"] == "decay_one_point":
 
-    return decay_perc_results
+            try:  # TODO: in the rarest of instances no conditional is met and decay percent time is not defined
+                (decay_timepoint, decay_value, decay_time_ms,) = voltage_calc.calclate_decay_to_point_from_exp_fit(
+                    decay_period_time,
+                    decay_period_data,
+                    event_info["peak"]["time"],
+                    base_im,
+                    event_info["amplitude"]["im"],
+                    run_settings["decay_amplitude_percent"],
+                    run_settings["interp_200khz"],
+                )
+            except:
+                return False, False
+
+            decay_perc_results = {
+                "time": decay_timepoint,
+                "im": decay_value,
+                "decay_time_ms": decay_time_ms,
+                "smoothed_decay_time": smoothed_decay_time,
+                "smoothed_decay_im": smoothed_decay_im,
+            }
+            decay_cutoff_results = None
+
+        elif run_settings["decay_mode"] == "decay_between_points":
+
+            (min_time, min_data, max_time, max_data, decay_time,) = voltage_calc.calculate_decay_cutoff_for_exp_fit(
+                decay_period_time,
+                decay_period_data,
+                base_im,
+                event_info["amplitude"]["im"],
+                run_settings["decay_cutoff_low"],
+                run_settings["decay_cutoff_high"],
+                run_settings["interp_200khz"],
+            )
+
+            decay_cutoff_results = {
+                "min_time": min_time,
+                "min_im": min_data,
+                "max_time": max_time,
+                "max_im": max_data,
+                "decay_time_ms": decay_time * 1000,
+                "smoothed_decay_time": smoothed_decay_time,
+                "smoothed_decay_im": smoothed_decay_im,
+            }
+            decay_perc_results = None
+
+    return decay_perc_results, decay_cutoff_results
 
 
 # Checking R2 and Bounds
@@ -1190,7 +1281,6 @@ def calculate_event_rise_time(time_: NpArray64, data: NpArray64, event_info: Dic
         event_info["peak"]["idx"],
         event_info["baseline"]["im"],
         event_info["peak"]["im"],
-        run_settings["direction"],
         min_cutoff_perc=run_settings["rise_cutoff_low"],
         max_cutoff_perc=run_settings["rise_cutoff_high"],
         interp=run_settings["interp_200khz"],
@@ -1223,12 +1313,13 @@ def calculate_half_width(time_: NpArray64, data: NpArray64, event_info: Dict, ru
     If decay monoexponetial or decay is smoothed, calculate
     decay-side midpoint from this.
     """
-    bl_idx, peak_idx, bl_im, amplitude, decay_perc_info = [
+    bl_idx, peak_idx, bl_im, amplitude, decay_perc_info, decay_cutoff = [
         event_info["baseline"]["idx"],
         event_info["peak"]["idx"],
         event_info["baseline"]["im"],
         event_info["amplitude"]["im"],
-        event_info["decay_perc"],
+        event_info["decay_one_point"],
+        event_info["decay_between_points"],
     ]
     half_amp = bl_im + amplitude / 2
     bl_to_peak_time = time_[bl_idx : peak_idx + 1]
@@ -1239,8 +1330,14 @@ def calculate_half_width(time_: NpArray64, data: NpArray64, event_info: Dict, ru
         decay_exp_fit_im = data[peak_idx:]
 
     elif run_settings["decay_or_biexp_fit_method"] == "do_not_fit":
-        decay_exp_fit_time = decay_perc_info["smoothed_decay_time"]
-        decay_exp_fit_im = decay_perc_info["smoothed_decay_im"]
+        # TODO: rename decay_perc_info and decay_cutoff to new
+        # decay time one point and between points (respectively).
+        if decay_perc_info is not None:
+            decay_exp_fit_time = decay_perc_info["smoothed_decay_time"]
+            decay_exp_fit_im = decay_perc_info["smoothed_decay_im"]
+        else:
+            decay_exp_fit_time = decay_cutoff["smoothed_decay_time"]
+            decay_exp_fit_im = decay_cutoff["smoothed_decay_im"]
 
     elif run_settings["decay_or_biexp_fit_method"] == "monoexp":
         decay_exp_fit_time = event_info["monoexp_fit"]["fit_time"]
@@ -1491,12 +1588,12 @@ def need_to_recalculate_event_endpoint(run_settings: Dict) -> bool:
 
 
 def index_out_individual_events(
-    im_array: NpArray64,
-    window_length_samples: int,
+    data_array: NpArray64,
+    window_length_samples: List[Int],
     alignment_method: Literal["peak", "rise_half_width", "baseline"],
     event_info: List[Dict],
-    average=True,
-) -> Tuple[NpArray64, Int]:
+    average: bool = True,
+) -> NpArray64:
     """
     Index into the Im array to create an average event
     based on event_info events.
@@ -1505,10 +1602,11 @@ def index_out_individual_events(
     a num_events by timepoints array, showing all events un-averaged.
     Alternatively, it can average the events
     """
-    num_left_edge_samples = get_num_left_edge_samples(event_info)
     total_num_events = core_analysis_methods.total_num_events(event_info)
 
-    traces = utils.np_empty_nan((total_num_events, num_left_edge_samples + window_length_samples))
+    window_samples_left, window_samples_right = window_length_samples
+
+    traces = utils.np_empty_nan((total_num_events, window_samples_left + window_samples_right))
 
     ev_idx = -1
     for rec in range(len(event_info)):
@@ -1517,27 +1615,27 @@ def index_out_individual_events(
 
                 ev_idx += 1
 
-                rec_im_array = im_array[rec]
+                rec_data_array = data_array[rec]
 
                 start_idx, end_idx = get_window_indexes_false_if_not_full_window(
                     ev,
                     alignment_method,
-                    rec_im_array,
-                    num_left_edge_samples,
-                    window_length_samples,
+                    rec_data_array,
+                    window_samples_left,
+                    window_samples_right,
                 )
 
                 if start_idx is False or end_idx is False:
                     continue
 
-                event_to_add = rec_im_array[start_idx:end_idx]
+                event_to_add = rec_data_array[start_idx:end_idx]
 
                 traces[ev_idx, :] = event_to_add
 
     if average:
         traces = average_events_overlay(traces)
 
-    return traces, num_left_edge_samples
+    return traces
 
 
 def average_events_overlay(events_overlay: NpArray64) -> NpArray64:
@@ -1556,7 +1654,7 @@ def shift_and_scale_array(
     scale: bool,
     shift_method: Optional[Literal["demean", "aligned_param", "start_idx"]],
     scale_method: Optional[Literal["amplitude_to_1", "std_to_1"]],
-    param_idx=None,
+    param_idx: Optional[Int] = None,
 ) -> NpArray64:
     """
     Given an array of events (num_events x num_samples), shift and scale
@@ -1631,7 +1729,7 @@ def validate_shift_and_scale_inputs(
 def get_window_indexes_false_if_not_full_window(
     ev: Dict,
     alignment_method: Literal["peak", "rise_half_width", "baseline"],
-    rec_im_array: NpArray64,
+    rec_data_array: NpArray64,
     num_left_edge_samples: Int,
     window_length_samples: Int,
 ) -> Tuple[Union[Literal[False], Int], ...]:
@@ -1653,7 +1751,7 @@ def get_window_indexes_false_if_not_full_window(
         parameter_to_align_idx = ev["baseline"]["idx"]
 
     start_idx, end_idx = index_event_and_check_window_size(
-        rec_im_array,
+        rec_data_array,
         parameter_to_align_idx,
         num_left_edge_samples,
         window_length_samples,
@@ -1662,7 +1760,7 @@ def get_window_indexes_false_if_not_full_window(
 
 
 def index_event_and_check_window_size(
-    rec_im_array: NpArray64,
+    rec_data_array: NpArray64,
     parameter_to_align_idx: Int,
     num_left_edge_samples: Int,
     window_length_samples: Int,
@@ -1672,7 +1770,7 @@ def index_event_and_check_window_size(
     """
     start_idx = parameter_to_align_idx - num_left_edge_samples
     end_idx = parameter_to_align_idx + window_length_samples
-    if start_idx < 0 or end_idx >= len(rec_im_array):
+    if start_idx < 0 or end_idx >= len(rec_data_array):
         return False, False
 
     return start_idx, end_idx
@@ -1715,7 +1813,7 @@ def make_event_info_dict() -> Dict:
     """
     Holds all event kinetics info, it is 2 layers deeps.
 
-    VoltageClampDataModel.
+    CombinedAnalysisModel.
           This is particularly important if adding a third dict. layer.
 
     Notes
@@ -1752,12 +1850,19 @@ def make_event_info_dict() -> Dict:
             "fit_im": None,
             "r2": None,
         },
-        "decay_perc": {
+        "decay_one_point": {
             "time": None,
             "im": None,
             "decay_time_ms": None,
             "smoothed_decay_time": None,
             "smoothed_decay_im": None,
+        },
+        "decay_between_points": {
+            "min_time": None,
+            "min_im": None,
+            "max_time": None,
+            "max_im": None,
+            "decay_time_ms": None,
         },
         "half_width": {
             "rise_midtime": None,

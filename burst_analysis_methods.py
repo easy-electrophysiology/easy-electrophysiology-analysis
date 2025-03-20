@@ -412,7 +412,7 @@ def calculate_max_interval_method(peak_times: NpArray64, isi: NpArray64, params:
     """
     Max interval method, uses the below parameters to detect bursts:
 
-    max_interval            - maximimum ISI interval for spikes in a burst
+    max_interval            - maximum ISI interval for spikes in a burst
     max_end_interval        - maximum ISI interval for the last spike of a burst
     min_spikes_per_burst    - minimum number of spikes in a burst
     min_burst_duration
